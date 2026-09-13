@@ -23,3 +23,23 @@ Scope, so this file does not grow into a second copy of somebody else's:
   `shell_command`; a custom component owning the subprocess can — which is what
   `scan/scanner.py` is, and why this trap sits in this repository rather than
   beside Home Assistant's own instruments.
+
+## The suite's own dependencies, on a Debian Python
+- **`pip install -r tests/requirements.txt` FAILS here, and not over anything this
+  repository wrote.** The break is one level down, in the `sgmllib3k` that
+  `feedparser==6.0.11` requires: setuptools' `install_lib.finalize_options`
+  reads `install_layout` off the `install` command, setuptools' own vendored
+  `_distutils` copy carries no such option, so the build dies on
+  `AttributeError: install_layout`, no wheel is produced, and every suite that
+  loads `feeds/` then fails on `ModuleNotFoundError: No module named 'sgmllib'`.
+  **`SETUPTOOLS_USE_DISTUTILS=stdlib` builds it** — Debian patches
+  `install_layout` into the stdlib distutils, so the attribute resolves.
+  Measured on both arms with `--no-cache-dir`, setuptools 68.1.2 / Python 3.11.
+- **pip's wheel cache erases the difference on the second attempt**, which is how
+  this reads as already fixed: once the wheel exists, an install WITHOUT the
+  variable succeeds from cache. An A/B that omits `--no-cache-dir` reports the
+  workaround as unnecessary and is measuring the cache, not the build.
+- **A red seventh suite here over a green `tests` job is this trap, not a
+  regression** — that job runs the workflow's own Python and is green on master.
+  Reaching for that conclusion without the install above is how a pass ships
+  having exercised six of its seven suites and says so only in a commit message.
