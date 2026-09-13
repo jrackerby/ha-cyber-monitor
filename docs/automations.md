@@ -36,10 +36,16 @@ turn a wall red, page someone).
 ### How the debounce and the limits behave
 
 - A finding is confirmed after it has been present in *N* consecutive scans
-  (default 2) and cleared after *M* consecutive absences (default 2). One
-  hourly discovery sweep is one observation, so the default is two hours to
-  raise on a new host. Set *Scans to confirm* to 1 if you want the latency
-  instead of the false-positive protection.
+  (default 2) and cleared after *M* consecutive absences (default 2). A scan
+  is one that produced a new inventory — any sweep in local mode, a new
+  `generated_at` from an agent, a new NVD fetch for the CVE flag; the
+  coordinator republishing the same inventory on its tick does not count.
+  With hourly discovery the default is two hours to raise on a new host. Set
+  *Scans to confirm* to 1 if you want the latency instead of the
+  false-positive protection.
+- Confirmed findings **survive a restart**. The flag comes back up on boot for
+  hosts already confirmed and no `detected` event fires for them; only a host
+  that appears after the restart goes through the debounce and announces.
 - Once a flag changes it holds for the *minimum hold* (default 5 minutes)
   before it may change again. A change arriving inside the hold is applied at
   the end of it; `deferred_changes` on the entity counts how many there were.
