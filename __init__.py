@@ -19,10 +19,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
+from .alerts import AlertMonitor
 from .const import DOMAIN, PLATFORMS
 from .cve.coordinator import NvdEstateCoordinator
 from .feeds.coordinator import EstateFeedsCoordinator
-from .runtime import KEY_SCAN, scan_coordinator_of
+from .runtime import KEY_ALERTS, KEY_SCAN, scan_coordinator_of
 from .scan import (
     async_register_scanner_device,
     async_remove_scan_device,
@@ -54,10 +55,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # THE ONLY WRITE. Every read of this dict goes through runtime.py --
     # KEY_SCAN is the same constant the accessor there indexes with, so a
     # rename cannot land on this line and miss a reader.
+    # STARTED BEFORE THE PLATFORMS ARE FORWARDED, so its coordinator listeners
+    # are registered ahead of every entity's and run first on each refresh --
+    # the binary sensors then read a flag the monitor has already moved.
+    alerts = AlertMonitor(hass, entry, scan_coordinator, cve_coordinator)
+    alerts.async_start()
+    entry.async_on_unload(alerts.async_stop)
+
     entry.runtime_data = {
         "feeds": feeds_coordinator,
         "cve": cve_coordinator,
         KEY_SCAN: scan_coordinator,
+        KEY_ALERTS: alerts,
     }
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

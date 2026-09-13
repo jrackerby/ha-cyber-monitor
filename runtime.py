@@ -28,6 +28,9 @@ from typing import Any
 # The key `__init__.py` writes. Named once so a rename cannot land on the
 # writer and miss a reader, which is the shape of the bug above.
 KEY_SCAN = "scan"
+# The alert monitor (alerts.py), written beside the coordinators by the same
+# line and read only through `alert_monitor_of`, for the same reason.
+KEY_ALERTS = "alerts"
 
 
 def scan_coordinator_of(entry: Any) -> Any | None:
@@ -44,6 +47,14 @@ def scan_coordinator_of(entry: Any) -> Any | None:
     if not isinstance(data, dict):
         return None
     return data.get(KEY_SCAN)
+
+
+def alert_monitor_of(entry: Any) -> Any | None:
+    """The alert monitor on one entry, or None if it has not got one."""
+    data = getattr(entry, "runtime_data", None)
+    if not isinstance(data, dict):
+        return None
+    return data.get(KEY_ALERTS)
 
 
 def scan_coordinators(entries: Any) -> list[Any]:

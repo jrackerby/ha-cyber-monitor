@@ -53,6 +53,19 @@ from homeassistant.helpers.selector import (
     NumberSelectorMode,
 )
 
+from .alerting import (
+    CONF_CLEAR_OBSERVATIONS,
+    CONF_CONFIRM_OBSERVATIONS,
+    CONF_MAX_EVENTS_PER_HOUR,
+    CONF_MIN_HOLD_MINUTES,
+    MAX_EVENTS_PER_HOUR,
+    MAX_HOLD_MINUTES,
+    MAX_OBSERVATIONS,
+    MIN_EVENTS_PER_HOUR,
+    MIN_HOLD_MINUTES,
+    MIN_OBSERVATIONS,
+    resolve_policy,
+)
 from .const import DOMAIN
 from .cve.const import CONF_API_KEY, NVD_CVE_URL
 from .scan.api import (
@@ -150,6 +163,23 @@ def _validated_scope(user_input: dict[str, Any]) -> tuple[list[str], list[str]]:
     for value in targets + excludes:
         validate_target(value)
     return targets, excludes
+
+
+def _count(minimum: int, maximum: int, unit: str):
+    """A bounded whole number with a unit label. Same shape as `_minutes`,
+    for the same reason: the bounds are the module's, never restated."""
+    return vol.All(
+        NumberSelector(
+            NumberSelectorConfig(
+                min=minimum,
+                max=maximum,
+                step=1,
+                mode=NumberSelectorMode.BOX,
+                unit_of_measurement=unit,
+            )
+        ),
+        vol.Coerce(int),
+    )
 
 
 def _minutes(minimum: int, maximum: int):
@@ -573,11 +603,16 @@ class CyberEstateOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Pick a concern -- or, in agent mode, go straight to the one that
         applies, rather than showing a menu with a single item on it."""
+        # Alerting is mode-independent: it debounces the join's answer, which
+        # agent and local mode produce identically. So agent mode has two
+        # concerns now and gets a menu rather than a jump.
         if self.config_entry.data.get(CONF_MODE) != MODE_LOCAL:
-            return await self.async_step_acknowledged_macs()
+            return self.async_show_menu(
+                step_id="init", menu_options=["acknowledged_macs", "alerting"]
+            )
         return self.async_show_menu(
             step_id="init",
-            menu_options=["scan_scope", "schedule", "acknowledged_macs"],
+            menu_options=["scan_scope", "schedule", "acknowledged_macs", "alerting"],
         )
 
     def _save(self, updates: dict[str, Any]) -> ConfigFlowResult:
@@ -702,6 +737,59 @@ class CyberEstateOptionsFlow(OptionsFlow):
                     ): _minutes(
                         MIN_SSH_INTERVAL_MINUTES, MAX_SSH_INTERVAL_MINUTES
                     ),
+                }
+            ),
+        )
+
+    # -- when a finding becomes an alert, and how often the bus hears it ----
+
+    async def async_step_alerting(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Debounce, hold and event-rate for the two security flags.
+
+        FOUR NUMBERS, ONE RESOLVER. Defaults shown here come from
+        `alerting.resolve_policy` over the stored options, which is also what
+        the monitor runs on, so the form cannot show one number while the
+        flag keeps another. Read live by the monitor on every observation --
+        a lowered confirm count takes effect on the next sweep, no reload.
+
+        The bounds are enforced by the selector on submit AND by the resolver
+        on read, for the reason `schedule` gives: only one of them sees a
+        value that arrived from a hand-edited .storage file.
+        """
+        policy = resolve_policy(self.config_entry.options)
+
+        if user_input is not None:
+            return self._save(
+                {
+                    CONF_CONFIRM_OBSERVATIONS: user_input[CONF_CONFIRM_OBSERVATIONS],
+                    CONF_CLEAR_OBSERVATIONS: user_input[CONF_CLEAR_OBSERVATIONS],
+                    CONF_MIN_HOLD_MINUTES: user_input[CONF_MIN_HOLD_MINUTES],
+                    CONF_MAX_EVENTS_PER_HOUR: user_input[CONF_MAX_EVENTS_PER_HOUR],
+                }
+            )
+
+        return self.async_show_form(
+            step_id="alerting",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_CONFIRM_OBSERVATIONS,
+                        default=policy.confirm_observations,
+                    ): _count(MIN_OBSERVATIONS, MAX_OBSERVATIONS, "scans"),
+                    vol.Required(
+                        CONF_CLEAR_OBSERVATIONS,
+                        default=policy.clear_observations,
+                    ): _count(MIN_OBSERVATIONS, MAX_OBSERVATIONS, "scans"),
+                    vol.Required(
+                        CONF_MIN_HOLD_MINUTES,
+                        default=int(policy.min_hold_seconds // 60),
+                    ): _minutes(MIN_HOLD_MINUTES, MAX_HOLD_MINUTES),
+                    vol.Required(
+                        CONF_MAX_EVENTS_PER_HOUR,
+                        default=policy.max_events_per_hour,
+                    ): _count(MIN_EVENTS_PER_HOUR, MAX_EVENTS_PER_HOUR, "events"),
                 }
             ),
         )

@@ -227,7 +227,7 @@ check("en.json is the same document as strings.json", _en, _strings)
 # (user/local/agent/...) cannot be mistaken for options steps.
 _opts_src = _flow[_flow.index("class CyberEstateOptionsFlow"):]
 _steps = set(re.findall(r'step_id="([a-z_]+)"', _opts_src))
-_menu = set(re.findall(r'"(scan_scope|schedule|acknowledged_macs)",', _opts_src))
+_menu = set(re.findall(r'"(scan_scope|schedule|acknowledged_macs|alerting)"[,\]]', _opts_src))
 _declared = set(_strings["options"]["step"])
 
 check("every step the flow renders has a strings.json entry",
@@ -241,8 +241,10 @@ check("the menu offers exactly the steps that exist",
 # that matched nothing would pass them both.
 check("the scraper actually found the steps",
       sorted(_steps),
-      ["acknowledged_macs", "init", "scan_scope", "schedule"])
+      ["acknowledged_macs", "alerting", "init", "scan_scope", "schedule"])
 
+# `alerting` is not listed: its fields are alerting.py's, not scan/const.py's,
+# and tests/test_alerting.py joins that step against strings.json itself.
 _expected_fields = {
     "scan_scope": {const.CONF_TARGETS, const.CONF_EXCLUDE},
     "schedule": {D, S, P},
