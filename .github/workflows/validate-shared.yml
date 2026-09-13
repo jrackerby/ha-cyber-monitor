@@ -34,4 +34,5 @@ jobs:
     with:
       domain: "cyber_estate"
       public: true
+      pytest-guard: false
       run-imports: false
