@@ -23,6 +23,20 @@ WHAT IT WATCHES.
     and folding an unread into an absence would clear a real finding on an
     outage.
 
+AN OBSERVATION IS A NEW SCAN, NOT A COORDINATOR PUBLISH. Measured on the
+first deploy: the local coordinator republishes the same inventory on every
+five-minute tick and after every sweep, so 46 hosts were "confirmed" eight
+seconds after boot on two publishes of one scan. Each observation is keyed
+on the inventory's own stamp -- `generated_at` for scan, `generated` for
+cve -- and a publish carrying the stamp already observed moves the held flag
+and the acknowledgement set but never the debounce counts.
+
+CONFIRMED FINDINGS SURVIVE A RESTART. The confirmed keys and the last
+observed stamp are persisted per entry; on start they are seeded silently, so
+a restart fires no `detected` event for a host that was already known and the
+flag comes up on without a burst. Measured on the same deploy: without this,
+every boot re-fired the limit's worth of events and dropped the rest.
+
 THE CLOCK IS WALL TIME, from `dt_util.utcnow()`, so a hold deadline can be
 published as a timestamp an operator can read. A deferred flip is
 re-proposed by a timer at the hold's expiry rather than waiting for the next
@@ -37,6 +51,7 @@ from typing import Any
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .alerting import (
@@ -68,6 +83,19 @@ FLAG_VULNERABILITIES = "vulnerabilities"
 MAX_DETAIL = 25
 _CVE_KEY = "actionable"
 
+STORAGE_VERSION = 1
+# Seconds to collapse a burst of transitions into one write.
+SAVE_DELAY = 10
+
+
+def _storage_key(entry_id: str) -> str:
+    return f"{DOMAIN}.alerts.{entry_id}"
+
+
+async def async_remove_alert_store(hass: HomeAssistant, entry_id: str) -> None:
+    """Forget the persisted confirmed set when the ENTRY is removed."""
+    await Store(hass, STORAGE_VERSION, _storage_key(entry_id)).async_remove()
+
 
 class _Flag:
     """One debounced, held flag and the keys behind it."""
@@ -80,6 +108,9 @@ class _Flag:
         self.detail: dict[Any, dict[str, Any]] = {}
         self.wanted = False
         self.last_observed: str | None = None
+        # The inventory stamp of the last observation counted. A publish
+        # carrying the same stamp is the same scan and is not counted again.
+        self.stamp: Any = None
 
 
 class AlertMonitor:
@@ -95,31 +126,53 @@ class AlertMonitor:
         self._listeners: list[CALLBACK_TYPE] = []
         self._unsub: list[CALLBACK_TYPE] = []
         self._retry_timers: dict[str, CALLBACK_TYPE] = {}
+        self._store: Store = Store(hass, STORAGE_VERSION, _storage_key(entry.entry_id))
 
     # -- lifecycle -----------------------------------------------------------
 
-    @callback
-    def async_start(self) -> None:
-        """Subscribe to both coordinators and fold in whatever they hold now.
+    async def async_start(self) -> None:
+        """Restore what was confirmed, subscribe, and fold in what is held now.
 
         Called from `async_setup_entry` BEFORE the platforms are forwarded,
         so the monitor's listener runs ahead of every entity's on each
         refresh -- the entity then reads a state the monitor has already
         updated, never the previous tick's.
         """
+        saved = await self._store.async_load() or {}
+        for name, flag in self._flags.items():
+            row = saved.get(name) or {}
+            flag.debouncer.seed(row.get("confirmed") or [])
+            flag.stamp = row.get("stamp")
+            for key, detail in (row.get("detail") or {}).items():
+                flag.detail[key] = detail
         self._unsub.append(self._scan.async_add_listener(self._on_scan))
         self._unsub.append(self._cve.async_add_listener(self._on_cve))
         self._on_scan()
         self._on_cve()
 
-    @callback
-    def async_stop(self) -> None:
+    async def async_stop(self) -> None:
         for unsub in self._unsub:
             unsub()
         self._unsub.clear()
         for cancel in self._retry_timers.values():
             cancel()
         self._retry_timers.clear()
+        # Write now rather than leave a delayed save to race the unload.
+        await self._store.async_save(self._data_to_save())
+
+    def _data_to_save(self) -> dict[str, Any]:
+        return {
+            name: {
+                "confirmed": sorted(flag.debouncer.confirmed),
+                "stamp": flag.stamp,
+                # Detail for the confirmed keys only, so a `cleared` event
+                # after a restart can still name the host.
+                "detail": {
+                    k: flag.detail[k] for k in flag.debouncer.confirmed if k in flag.detail
+                },
+            }
+            for name, flag in self._flags.items()
+        }
 
     @callback
     def async_add_listener(self, update: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -166,7 +219,12 @@ class AlertMonitor:
             m for m in (normalise_mac(r.get("mac")) for r in view.acknowledged) if m
         }
         flag.debouncer.forget(acked)
-        self._observe(FLAG_UNKNOWN_HOSTS, present.keys(), self._unknown_host_payload)
+        self._observe(
+            FLAG_UNKNOWN_HOSTS,
+            present.keys(),
+            self._unknown_host_payload,
+            stamp=view.inventory.generated_at,
+        )
 
     @callback
     def _on_cve(self) -> None:
@@ -194,18 +252,33 @@ class AlertMonitor:
             ],
         }
         present = [_CVE_KEY] if int(count) > 0 else []
-        self._observe(FLAG_VULNERABILITIES, present, self._vulnerability_payload)
+        self._observe(
+            FLAG_VULNERABILITIES,
+            present,
+            self._vulnerability_payload,
+            stamp=data.get("generated"),
+        )
 
-    def _observe(self, name: str, present, payload_fn: Callable[[Any], dict]) -> None:
+    def _observe(
+        self, name: str, present, payload_fn: Callable[[Any], dict], stamp: Any
+    ) -> None:
         flag = self._flags[name]
         policy = self.policy
         now = dt_util.utcnow()
-        flag.last_observed = now.isoformat()
-        transitions: Transitions = flag.debouncer.observe(present, policy)
-        for key in transitions.asserted:
-            self._fire(_rise_kind(name), payload_fn(key), now.timestamp(), policy)
-        for key in transitions.cleared:
-            self._fire(_fall_kind(name), payload_fn(key), now.timestamp(), policy)
+        # ONE SCAN, ONE OBSERVATION. A stamp of None (nothing scanned yet) is
+        # never counted either: there is no inventory to observe.
+        if stamp is not None and stamp != flag.stamp:
+            flag.stamp = stamp
+            flag.last_observed = now.isoformat()
+            transitions: Transitions = flag.debouncer.observe(present, policy)
+            for key in transitions.asserted:
+                self._fire(_rise_kind(name), payload_fn(key), now.timestamp(), policy)
+            for key in transitions.cleared:
+                self._fire(_fall_kind(name), payload_fn(key), now.timestamp(), policy)
+            if transitions:
+                self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
+        # The acknowledgement set may have moved without a new scan, and the
+        # hold may have expired: the flag is re-derived on every publish.
         flag.wanted = bool(flag.debouncer.confirmed)
         self._propose(name, now.timestamp(), policy)
         self._notify()

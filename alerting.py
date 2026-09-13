@@ -241,6 +241,18 @@ class Debouncer:
         out.cleared.sort(key=repr)
         return out
 
+    def seed(self, keys: Iterable[Hashable]) -> None:
+        """Mark keys confirmed WITHOUT reporting a transition.
+
+        For state carried across a restart: a host confirmed yesterday is not
+        a discovery today, and announcing it again would fire a defensive
+        automation at every boot. Seeding is silent; a seeded key still
+        clears through the ordinary fall path when it goes absent.
+        """
+        for key in keys:
+            self._confirmed.add(key)
+            self._rising.pop(key, None)
+
     def forget(self, keys: Iterable[Hashable]) -> None:
         """Drop keys from every bucket without reporting a transition.
 

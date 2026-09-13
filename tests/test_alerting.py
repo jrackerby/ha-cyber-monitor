@@ -136,6 +136,17 @@ def test_debounce_policy_read_each_observation():
     check(t.asserted == ["a"], "lowering the threshold confirms on the next sweep")
 
 
+def test_debounce_seed_is_silent_and_clears_normally():
+    d = Debouncer()
+    p = AlertPolicy(confirm_observations=2, clear_observations=1)
+    d.seed({"a"})
+    check(d.confirmed == frozenset({"a"}), "seeded key is confirmed")
+    t = d.observe({"a"}, p)
+    check(not t.asserted, "a seeded key is never announced as new")
+    t = d.observe(set(), p)
+    check(t.cleared == ["a"], "a seeded key clears through the ordinary fall")
+
+
 def test_debounce_forget_reports_nothing():
     d = Debouncer()
     p = AlertPolicy(confirm_observations=1, clear_observations=1)

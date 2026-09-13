@@ -19,7 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
-from .alerts import AlertMonitor
+from .alerts import AlertMonitor, async_remove_alert_store
 from .const import DOMAIN, PLATFORMS
 from .cve.coordinator import NvdEstateCoordinator
 from .feeds.coordinator import EstateFeedsCoordinator
@@ -59,7 +59,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # are registered ahead of every entity's and run first on each refresh --
     # the binary sensors then read a flag the monitor has already moved.
     alerts = AlertMonitor(hass, entry, scan_coordinator, cve_coordinator)
-    alerts.async_start()
+    await alerts.async_start()
     entry.async_on_unload(alerts.async_stop)
 
     entry.runtime_data = {
@@ -94,13 +94,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Forget scan's stored inventory when the entry itself is removed.
+    """Forget scan's stored inventory and the alert monitor's confirmed set
+    when the entry itself is removed.
 
     Only on REMOVAL, never on unload -- see scan/__init__.py's
     async_remove_scan_entry docstring. feeds and cve carry no persisted
     state of their own to clean up.
     """
     await async_remove_scan_entry(hass, entry)
+    await async_remove_alert_store(hass, entry.entry_id)
 
 
 async def async_remove_config_entry_device(
