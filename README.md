@@ -45,7 +45,7 @@ would have succeeded. One entry has one setup lifecycle by construction; if
 
 ## What it creates
 
-Platforms: `button`, `sensor`, `switch`.
+Platforms: `binary_sensor`, `button`, `sensor`, `switch`.
 
 - **feeds** — advisory/alert feeds, timezone-correct. `feeds/feedparse.py`
   resolves feed timezone *abbreviations* from an explicit table rather than by
@@ -53,6 +53,15 @@ Platforms: `button`, `sensor`, `switch`.
   which silently mis-orders entries on any host outside the feed's zone.
 - **cve** — NVD lookups against the inventory the scanner builds.
 - **scan** — nmap sweeps, unknown-host detection, MAC acknowledgement.
+- **alerts** — two debounced flags, `binary_sensor.<scanner>_unknown_host_present`
+  and `binary_sensor.nvd_vulnerabilities_actionable_vulnerability`, and the
+  `cyber_estate_event` stream behind them (`unknown_host_detected` /
+  `_cleared`, `vulnerability_actionable` / `_cleared`). A finding is confirmed
+  after N consecutive scans and cleared after M, a flag holds for a minimum
+  time once it changes, and events are capped per hour per type. Nothing is
+  suppressed silently: deferred flips and dropped events are counted on the
+  flag's attributes. Defensive-action automation templates for all of it are
+  in [`docs/automations.md`](docs/automations.md).
 
 ## Configuration
 
@@ -63,7 +72,9 @@ already-acknowledged MACs.
 
 **Options** (*Configure* on the entry) edit what is safe to change while it
 runs, one concern per step: the networks to scan and the addresses to leave
-alone, how often each local sweep runs, and the acknowledged MACs. Each step
+alone, how often each local sweep runs, the acknowledged MACs, and when a
+finding becomes an alert (scans to confirm and to clear, minimum hold, events
+per hour). Each step
 saves on its own, takes effect on the scanner's next tick, and neither reloads
 the integration nor touches the scan history — so a subnet can be added without
 losing the date every device was first seen.

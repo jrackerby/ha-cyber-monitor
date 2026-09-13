@@ -110,7 +110,8 @@
         "menu_options": {
           "scan_scope": "Networks to scan",
           "schedule": "How often to scan",
-          "acknowledged_macs": "Acknowledge unaccounted-for hosts"
+          "acknowledged_macs": "Acknowledge unaccounted-for hosts",
+          "alerting": "When a finding becomes an alert"
         }
       },
       "scan_scope": {
@@ -147,6 +148,22 @@
         },
         "data_description": {
           "acknowledged_macs": "One or more MAC addresses, separated by commas. Any format nmap or the device registry uses is accepted."
+        }
+      },
+      "alerting": {
+        "title": "When a finding becomes an alert",
+        "description": "Two flags — Unknown host present and Actionable vulnerability — and the cyber_estate_event stream behind them are debounced so an automation taking defensive action does not fire on a host that answered one sweep and vanished from the next. A finding is confirmed after it has been seen in this many consecutive scans, and clears after it has been missing from this many. Once a flag changes it is held for the minimum hold before it may change again; a change that arrives inside the hold is applied when the hold ends, and the flag's attributes count how many were deferred. Events over the hourly cap per type are dropped and counted on the flag, never silently.",
+        "data": {
+          "alert_confirm_observations": "Scans to confirm a finding",
+          "alert_clear_observations": "Scans to clear a finding",
+          "alert_min_hold_minutes": "Minimum hold",
+          "alert_max_events_per_hour": "Events per hour, per type"
+        },
+        "data_description": {
+          "alert_confirm_observations": "Consecutive scans a host or vulnerability must appear in before the flag raises and the detected event fires. 1 raises on first sight.",
+          "alert_clear_observations": "Consecutive scans it must be absent from before the flag clears and the cleared event fires.",
+          "alert_min_hold_minutes": "Once the flag changes, how long before it may change again. 0 disables the hold.",
+          "alert_max_events_per_hour": "Cap on cyber_estate_event events per event type in any rolling hour. Anything over is dropped and counted in events_suppressed."
         }
       }
     },
@@ -240,6 +257,14 @@
       },
       "schedule_deep": {
         "name": "Deep schedule"
+      }
+    },
+    "binary_sensor": {
+      "unknown_host_present": {
+        "name": "Unknown host present"
+      },
+      "actionable_vulnerability": {
+        "name": "Actionable vulnerability"
       }
     }
   }
