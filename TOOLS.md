@@ -16,6 +16,16 @@ Scope, so this file does not grow into a second copy of somebody else's:
   faster than anything else in a file like this; and anything unresolved, which
   is an issue on this repository.
 
+## The entry's mode
+- **THE SCHEDULE SWITCHES DO NOT TELL LOCAL MODE FROM AGENT MODE.**
+  `switch.cyber_estate_<profile>_schedule` carries `next_run`, `last_run`,
+  `scanning` and `last_result` in BOTH modes - `scan/switch_entities.py` presents
+  one control surface over the coordinator, and the local scanner fills the same
+  keys the agent's `/api/v1/status` would. Reading those attributes as proof of
+  an agent (#10's 2026-09-11 comment did, over an entry that had been local since
+  it was created) is the trap. `mode` is in the entry's `data`, which
+  `config_entries/get` omits: read it off `.storage/core.config_entries`.
+
 ## nmap inside the HA core container
 - **Present, privileged, NSE-STRIPPED**: `-sS`, `-sn`, `-O` work; `-sV` and `--script`
   fail (`nse_main.lua` missing). **`--datadir /config/nmap-data` restores both** from a
