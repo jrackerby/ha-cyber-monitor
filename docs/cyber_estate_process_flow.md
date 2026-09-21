@@ -161,9 +161,9 @@ flowchart TD
     LAUNCHDISC -.->|"background, on completion"| SCANRUN
     SCANRUN -.-> SCANRESULT{"exit ok?"}
     SCANRESULT -.->|"ScanBusy"| IGNORE["not an error — a scan is\nalready running, retry next tick"]
-    SCANRESULT -.->|"success or timeout w/ partial XML"| COVER["coverage.update_streaks()\n— COMPLETE sweeps only: which\nconfigured target answered nothing"]
+    SCANRESULT -.->|"success or timeout w/ partial XML"| COVER["_fold_in_full_sweep(..., prune=True)\n-> coverage.update_streaks()\n— COMPLETE sweeps only: which\nconfigured target answered nothing"]
     COVER -.->|"EMPTY_TARGET_SWEEPS in a row"| REPAIR["issue_registry: empty_targets\n— raised, rewritten or cleared\non every complete sweep"]
-    COVER -.-> APPLYSCAN["store.apply_scan()\nmerge_inventory() + prune() if complete"]
+    COVER -.-> APPLYSCAN["store.apply_scan()\nmerge_inventory() + prune() if complete\n— the SCHEDULED clocks are the only\nthing that ages the inventory"]
     APPLYSCAN -.-> PUBLISH["async_set_updated_data(_build_view())\n— published even on failure,\nso a scan never appears to run forever"]
 
     style RETURN fill:#1a3a2a,stroke:#2b9c6b,color:#eee
@@ -181,11 +181,13 @@ flowchart TD
     SVC2["service: cyber_estate.scan_device\nscan_service.py"] -->|"resolves device_id -> live IP\nvia coordinator.data.endpoints"| RUNCUSTOM
 
     REQSCAN -->|agent mode| APIREQ["client.async_request_scan()\nPOST /api/v1/scan — returns\nonce QUEUED, not finished"]
-    REQSCAN -->|local mode| RUNCUSTOM
+    REQSCAN -->|"local mode, discovery profile"| FOLD["_fold_in_full_sweep(..., prune=False)\n— whole-scope sweep: stamps the scope,\nmeasures coverage, MERGES the hosts.\nThe result used to be discarded (GH-31)"]
+    REQSCAN -->|"local mode, standard/deep"| RUNCUSTOM
     REQSCHED -->|agent mode| APISCHED["client.async_set_schedule()\nPOST /api/v1/schedule"]
     REQSCHED -->|local mode| SETFLAG["self._enabled[profile] = enabled\n(suppressed, never rescheduled\nfar-future)"]
 
-    RUNCUSTOM --> APPLYSCAN2["store.apply_scan(..., stale_days=None)\n— an on-demand scan NEVER PRUNES"]
+    RUNCUSTOM --> APPLYSCAN2["store.apply_scan(..., stale_days=None)\n— NO SWEEP SOMEBODY ASKED FOR PRUNES;\nonly the scheduled clocks age the inventory"]
+    FOLD --> APPLYSCAN2
     APPLYSCAN2 --> PUBLISH2["async_set_updated_data() immediately"]
 
     BTN -.->|"3s later (FOLLOWUP_DELAY)"| FOLLOWUP["schedule_followup_refresh()\nasync_call_later -> coordinator.async_request_refresh()\n— NOT optimistic; waits for the\nagent's marker-file side effect to land"]
