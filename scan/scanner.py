@@ -33,6 +33,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
+from .coverage import derive_discovery_timeout
 from .options import build_args
 from .parse import parse_scan
 
@@ -44,9 +45,13 @@ _LOGGER = logging.getLogger(__name__)
 # backstop, not a schedule.
 DEFAULT_TIMEOUT = 3600
 
-# A liveness sweep should never take this long; if it does, something is wrong
-# with the interface rather than with the network.
-DISCOVERY_TIMEOUT = 300
+# THE LIVENESS BACKSTOP IS NOT A CONSTANT HERE ANY MORE. It is an options key
+# resolved by `settings.resolve_settings`, falling back to a budget derived
+# from the configured scope -- both in `scan/const.py` and
+# `coverage.derive_discovery_timeout`, because a number this file invented
+# while the scope was configurable elsewhere is the defect GH-34 records.
+# The scheduled sweeps pass the resolved value; `derive_discovery_timeout` is
+# what any other caller gets.
 
 # nmap writes progress and warnings to stderr in normal operation, so stderr is
 # NOT an error signal. Only this much is kept for diagnostics.
@@ -165,15 +170,33 @@ class NmapScanner:
         async with self._lock:
             self._current = label
             try:
-                return await self._run(args, timeout, discovery_only)
+                # `targets`, the caller's list: `build_args` above has already
+                # run `validate_target` over every one of them and raises on a
+                # bad one, so anything reaching here is a shape
+                # `address_count` understands.
+                return await self._run(
+                    args, timeout, discovery_only, targets=targets
+                )
             finally:
                 self._current = None
 
     async def _run(
-        self, args: list[str], timeout: int | None, discovery_only: bool
+        self,
+        args: list[str],
+        timeout: int | None,
+        discovery_only: bool,
+        targets: list[str] | None = None,
     ) -> ScanResult:
         if timeout is None:
-            timeout = DISCOVERY_TIMEOUT if discovery_only else DEFAULT_TIMEOUT
+            # A CALLER THAT PASSED ONE ALREADY WON, above: the scheduled
+            # sweeps hand over `settings.discovery_timeout`, which is the
+            # operator's value when they set one. This is the fallback for
+            # everything else, and it derives rather than picking a constant.
+            timeout = (
+                derive_discovery_timeout(targets or [])
+                if discovery_only
+                else DEFAULT_TIMEOUT
+            )
 
         _LOGGER.debug("running: %s %s", self._binary, " ".join(args))
         started = asyncio.get_running_loop().time()

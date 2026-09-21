@@ -51,6 +51,10 @@ CONF_DISCOVERY_INTERVAL = "discovery_interval_minutes"
 CONF_SERVICE_INTERVAL = "service_interval_minutes"
 CONF_SSH_INTERVAL = "ssh_probe_interval_minutes"
 
+# How long a liveness sweep may run before it is killed. IN SECONDS, and the
+# key says so for the same reason the three above say minutes.
+CONF_DISCOVERY_TIMEOUT = "discovery_timeout_seconds"
+
 # Local-mode SSH reachability probe.
 CONF_SSH_ENABLED = "ssh_probe_enabled"
 CONF_SSH_KEY = "ssh_key"
@@ -139,6 +143,35 @@ MIN_DISCOVERY_INTERVAL_MINUTES = 5
 MAX_DISCOVERY_INTERVAL_MINUTES = 24 * 60
 MIN_SERVICE_INTERVAL_MINUTES = 60
 MAX_SERVICE_INTERVAL_MINUTES = 14 * 24 * 60
+
+# THE LIVENESS SWEEP'S RUNAWAY BACKSTOP. It was a flat 300 in `scanner.py`
+# while the scope it has to cover is the operator's to set -- the constant this
+# file's header forbids. A `/16` is an ordinary answer under Configure ->
+# Networks to scan and 300s cannot finish one, so that scope failed EVERY
+# sweep, permanently: 31 consecutive kills in 9.4 hours on a live estate, with
+# nothing merged and nothing pruned for the whole window (GH-34).
+#
+# UNSET MEANS DERIVED FROM THE SCOPE, not "use a default". A liveness sweep
+# costs roughly one probe per address, so the address count of the configured
+# targets is the honest basis, and an operator who never opens the form gets a
+# budget that tracks what they actually asked to be swept. Setting the key
+# PINS it: an explicit value stops tracking scope, which is the point of
+# setting one, and `strings.json` says so on the field.
+#
+# THE RATE IS DELIBERATELY GENEROUS, because this is a backstop and not a
+# schedule: killing a hung scan late costs one sweep's latency, killing a
+# healthy one early is the defect above. A routed subnet with no ARP shortcut
+# is far slower per address than a local one, and the rate covers that case.
+DISCOVERY_SECONDS_PER_ADDRESS = 0.05
+
+# BOUNDS SHARED BY BOTH PATHS, so a derived budget and a typed one cannot
+# disagree about what is acceptable. The floor is the constant this replaced,
+# so no small scope loses anything it has today. The ceiling is four hours:
+# past that a sweep is running for longer than most schedules leave between
+# sweeps, which is a scope problem rather than a timeout one, and it stops a
+# `::/0` typo parking an nmap process indefinitely.
+MIN_DISCOVERY_TIMEOUT_SECONDS = 300
+MAX_DISCOVERY_TIMEOUT_SECONDS = 4 * 60 * 60
 
 # The coordinator's own tick in local mode. It does NOT scan on every tick; it
 # checks whether either sweep is due. Short enough that an on-demand scan's

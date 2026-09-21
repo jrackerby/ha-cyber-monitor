@@ -72,7 +72,8 @@ already-acknowledged MACs.
 
 **Options** (*Configure* on the entry) edit what is safe to change while it
 runs, one concern per step: the networks to scan and the addresses to leave
-alone, how often each local sweep runs, the acknowledged MACs, and when a
+alone, how often each local sweep runs and how long one liveness
+sweep may run before it is abandoned, the acknowledged MACs, and when a
 finding becomes an alert (scans to confirm and to clear, minimum hold, events
 per hour). Each step
 saves on its own, takes effect on the scanner's next tick, and neither reloads

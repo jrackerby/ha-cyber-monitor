@@ -116,6 +116,53 @@ class InventoryView:
         return out
 
     @property
+    def live_endpoints(self) -> dict[str, dict[str, Any]]:
+        """Endpoints the MOST RECENT scan actually saw, keyed by normalised MAC.
+
+        `endpoints` IS NOT THIS SET, and reading it as though it were is the
+        defect this property exists to end (GH-33). `endpoints` is the whole
+        persisted inventory -- every host the integration has ever recorded --
+        so a guard phrased as "is this host still being seen" and implemented
+        against it answers "has this host ever existed", which is true of
+        every device on the device page. Nothing could be deleted.
+
+        `status` CANNOT ANSWER IT EITHER. `merge_inventory` only touches
+        records present in a scan result, so a host that leaves the network
+        keeps whatever `status` its last sighting recorded -- usually "up" --
+        for as long as the record survives. Measured on a live estate: 185
+        hosts tracked, 185 "up", including a subnet deleted days earlier.
+
+        `last_seen` IS THE ONLY FIELD THAT TRACKS SIGHTINGS. Every host in one
+        scan result is stamped with the same `ts`, so hosts seen together
+        share a byte-identical string and "seen in the newest scan" is an
+        exact comparison rather than a window that has to guess how long a
+        device may sleep.
+
+        A HOST WITH NO READABLE `last_seen` IS NOT REPORTED AS LIVE. We cannot
+        show it is still answering, and the guard above it refuses an action
+        the operator asked for -- so silence must not become a refusal. That
+        is the mirror of `parse.prune`'s rule, where silence must not become a
+        deletion: neither reading invents evidence, and each errs away from
+        surprising the operator.
+        """
+        stamps = [
+            h.get("last_seen") for h in self.inventory.hosts.values()
+            if h.get("last_seen")
+        ]
+        if not stamps:
+            return {}
+        newest = max(stamps)
+
+        out: dict[str, dict[str, Any]] = {}
+        for host in self.inventory.hosts.values():
+            if host.get("last_seen") != newest:
+                continue
+            mac = normalise_mac(host.get("mac"))
+            if mac:
+                out[mac] = host
+        return out
+
+    @property
     def service_census(self) -> dict[str, Any]:
         return census(self.inventory.hosts)
 
@@ -526,6 +573,10 @@ class LocalCoordinator(NetworkInventoryCoordinator):
                 list(settings.targets),
                 exclude=list(settings.exclude),
                 discovery_only=True,
+                # THE RESOLVED BUDGET, read off the entry with the rest of the
+                # schedule, so an operator's edit reaches the next sweep with
+                # no reload -- the same terms as the intervals beside it.
+                timeout=settings.discovery_timeout,
                 label="discovery",
             )
         except ScanBusy:
@@ -533,7 +584,23 @@ class LocalCoordinator(NetworkInventoryCoordinator):
             # liveness itself; retrying next tick is correct.
             return
         except ScanError as err:
+            # STAMPED ON FAILURE, exactly as the service sweep below is, and
+            # for the same reason: a permanently broken scan must not retry on
+            # every single tick. Neither stamp moved here before, so a sweep
+            # that could never finish re-fired every LOCAL_TICK forever -- the
+            # clock stayed due AND, after a scope edit, `_scope_changed` stayed
+            # true. Measured: 31 sweeps in 9.4 hours against an hourly
+            # interval, each burning the full timeout, nmap running back to
+            # back (GH-34).
+            #
+            # THE SCOPE STAMP GOES TOO, and it is the less obvious half. With
+            # only the clock stamped, `_scope_changed` alone still re-launches
+            # on every tick after an edit. An attempt covered the scope it
+            # attempted; the sweep retries on its ordinary clock, which is the
+            # backoff a repeated failure needs.
             _LOGGER.warning("discovery sweep failed: %s", err)
+            self._last_discovery = dt_util.utcnow()
+            self._swept_scope = self._scope_of(settings)
             return
         self._last_discovery = dt_util.utcnow()
         self._fold_in_full_sweep(settings, result, prune=True)
@@ -759,7 +826,8 @@ class LocalCoordinator(NetworkInventoryCoordinator):
             settings = self.settings
             result = await self.scanner.async_scan(
                 list(settings.targets), exclude=list(settings.exclude),
-                discovery_only=True, label="discovery",
+                discovery_only=True, timeout=settings.discovery_timeout,
+                label="discovery",
             )
             self._last_discovery = dt_util.utcnow()
             await self.store.async_load()
