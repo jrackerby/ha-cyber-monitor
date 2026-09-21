@@ -33,7 +33,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
-from .coverage import address_count
+from .coverage import derive_discovery_timeout
 from .options import build_args
 from .parse import parse_scan
 
@@ -45,28 +45,13 @@ _LOGGER = logging.getLogger(__name__)
 # backstop, not a schedule.
 DEFAULT_TIMEOUT = 3600
 
-# A LIVENESS SWEEP'S BACKSTOP IS DERIVED FROM THE SCOPE, not fixed, because
-# the scope is the operator's to set and a `/16` is an ordinary answer under
-# Configure -> Networks to scan. A flat 300s was the constant this file's
-# neighbour `const.py` forbids ("every address, credential and interval is
-# config-entry data rather than a constant"): it silently contradicted the
-# configuration, and a scope it could not finish failed EVERY time, forever.
-# Measured on a live estate: 31 consecutive sweeps killed at 300s, nothing
-# merged and nothing pruned for 9.4 hours (GH-34).
-#
-# THE FLOOR IS THE OLD CONSTANT, so no existing small scope gets a shorter
-# timeout than it has today, and the ceiling is DEFAULT_TIMEOUT, which is
-# already this file's runaway backstop for the expensive scans. Between them
-# the budget is per address, because that is what a liveness sweep's cost
-# actually scales with -- one probe per address, at high parallelism.
-#
-# THE RATE IS DELIBERATELY GENEROUS. This is a backstop, not a schedule (see
-# DEFAULT_TIMEOUT): being late to kill a hung scan costs one sweep's latency,
-# while being early kills healthy sweeps and is the defect above. A routed
-# subnet with no ARP shortcut is far slower per address than a local one, and
-# the rate has to cover that case rather than the fast one.
-MIN_DISCOVERY_TIMEOUT = 300
-SECONDS_PER_ADDRESS = 0.05
+# THE LIVENESS BACKSTOP IS NOT A CONSTANT HERE ANY MORE. It is an options key
+# resolved by `settings.resolve_settings`, falling back to a budget derived
+# from the configured scope -- both in `scan/const.py` and
+# `coverage.derive_discovery_timeout`, because a number this file invented
+# while the scope was configurable elsewhere is the defect GH-34 records.
+# The scheduled sweeps pass the resolved value; `derive_discovery_timeout` is
+# what any other caller gets.
 
 # nmap writes progress and warnings to stderr in normal operation, so stderr is
 # NOT an error signal. Only this much is kept for diagnostics.
@@ -98,24 +83,6 @@ class ScanResult:
     @property
     def host_count(self) -> int:
         return len(self.hosts)
-
-
-def discovery_timeout(targets: list[str]) -> int:
-    """How long a liveness sweep of `targets` may run before it is killed.
-
-    Bounded at both ends: never shorter than MIN_DISCOVERY_TIMEOUT, so a small
-    scope keeps exactly the budget it has today, and never longer than
-    DEFAULT_TIMEOUT, so a `::/0` typo cannot park an nmap process for a week.
-    Between them it scales with the number of addresses the operator asked to
-    be probed -- see the constants above for why that is a backstop rather
-    than an estimate.
-    """
-    return int(
-        max(
-            MIN_DISCOVERY_TIMEOUT,
-            min(DEFAULT_TIMEOUT, address_count(targets) * SECONDS_PER_ADDRESS),
-        )
-    )
 
 
 def find_nmap() -> str | None:
@@ -221,8 +188,12 @@ class NmapScanner:
         targets: list[str] | None = None,
     ) -> ScanResult:
         if timeout is None:
+            # A CALLER THAT PASSED ONE ALREADY WON, above: the scheduled
+            # sweeps hand over `settings.discovery_timeout`, which is the
+            # operator's value when they set one. This is the fallback for
+            # everything else, and it derives rather than picking a constant.
             timeout = (
-                discovery_timeout(targets or [])
+                derive_discovery_timeout(targets or [])
                 if discovery_only
                 else DEFAULT_TIMEOUT
             )

@@ -78,6 +78,7 @@ from .scan.const import (
     CONF_ACKNOWLEDGED_MACS,
     CONF_DATADIR,
     CONF_DISCOVERY_INTERVAL,
+    CONF_DISCOVERY_TIMEOUT,
     CONF_EXCLUDE,
     CONF_HOST,
     CONF_MODE,
@@ -97,9 +98,11 @@ from .scan.const import (
     DEFAULT_SSH_USERS,
     DEFAULT_STALE_DAYS,
     MAX_DISCOVERY_INTERVAL_MINUTES,
+    MAX_DISCOVERY_TIMEOUT_SECONDS,
     MAX_SERVICE_INTERVAL_MINUTES,
     MAX_SSH_INTERVAL_MINUTES,
     MIN_DISCOVERY_INTERVAL_MINUTES,
+    MIN_DISCOVERY_TIMEOUT_SECONDS,
     MIN_SERVICE_INTERVAL_MINUTES,
     MIN_SSH_INTERVAL_MINUTES,
     MIN_STALE_DAYS,
@@ -708,6 +711,7 @@ class CyberEstateOptionsFlow(OptionsFlow):
                     CONF_DISCOVERY_INTERVAL: user_input[CONF_DISCOVERY_INTERVAL],
                     CONF_SERVICE_INTERVAL: user_input[CONF_SERVICE_INTERVAL],
                     CONF_SSH_INTERVAL: user_input[CONF_SSH_INTERVAL],
+                    CONF_DISCOVERY_TIMEOUT: user_input[CONF_DISCOVERY_TIMEOUT],
                 }
             )
 
@@ -736,6 +740,23 @@ class CyberEstateOptionsFlow(OptionsFlow):
                         default=int(settings.ssh_interval.total_seconds() // 60),
                     ): _minutes(
                         MIN_SSH_INTERVAL_MINUTES, MAX_SSH_INTERVAL_MINUTES
+                    ),
+                    # DEFAULTED FROM THE RESOLVER, which means an entry that
+                    # has never set this shows the value DERIVED from its own
+                    # scope rather than a constant it is not using. A box
+                    # reading 300 while the sweep actually gets 3276 would be
+                    # the control that lies about itself this flow refuses.
+                    #
+                    # Saving therefore pins it: the form cannot offer "leave
+                    # it deriving" and a number in the same box, and a number
+                    # is what an operator opened this step to set.
+                    vol.Required(
+                        CONF_DISCOVERY_TIMEOUT,
+                        default=settings.discovery_timeout,
+                    ): _count(
+                        MIN_DISCOVERY_TIMEOUT_SECONDS,
+                        MAX_DISCOVERY_TIMEOUT_SECONDS,
+                        "seconds",
                     ),
                 }
             ),

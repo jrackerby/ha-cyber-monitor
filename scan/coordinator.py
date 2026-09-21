@@ -573,6 +573,10 @@ class LocalCoordinator(NetworkInventoryCoordinator):
                 list(settings.targets),
                 exclude=list(settings.exclude),
                 discovery_only=True,
+                # THE RESOLVED BUDGET, read off the entry with the rest of the
+                # schedule, so an operator's edit reaches the next sweep with
+                # no reload -- the same terms as the intervals beside it.
+                timeout=settings.discovery_timeout,
                 label="discovery",
             )
         except ScanBusy:
@@ -822,7 +826,8 @@ class LocalCoordinator(NetworkInventoryCoordinator):
             settings = self.settings
             result = await self.scanner.async_scan(
                 list(settings.targets), exclude=list(settings.exclude),
-                discovery_only=True, label="discovery",
+                discovery_only=True, timeout=settings.discovery_timeout,
+                label="discovery",
             )
             self._last_discovery = dt_util.utcnow()
             await self.store.async_load()

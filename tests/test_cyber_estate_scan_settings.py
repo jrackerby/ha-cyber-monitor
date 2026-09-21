@@ -263,7 +263,7 @@ check("the scraper actually found the steps",
 # and tests/test_alerting.py joins that step against strings.json itself.
 _expected_fields = {
     "scan_scope": {const.CONF_TARGETS, const.CONF_EXCLUDE},
-    "schedule": {D, S, P},
+    "schedule": {D, S, P, const.CONF_DISCOVERY_TIMEOUT},
     "acknowledged_macs": {const.CONF_ACKNOWLEDGED_MACS},
 }
 # The flow spells fields as CONF_ SYMBOLS, never as literals, so the join has

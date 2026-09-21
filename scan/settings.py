@@ -39,6 +39,7 @@ from typing import Any
 
 from .const import (
     CONF_DISCOVERY_INTERVAL,
+    CONF_DISCOVERY_TIMEOUT,
     CONF_EXCLUDE,
     CONF_SERVICE_INTERVAL,
     CONF_SSH_INTERVAL,
@@ -51,11 +52,14 @@ from .const import (
     MAX_DISCOVERY_INTERVAL_MINUTES,
     MAX_SERVICE_INTERVAL_MINUTES,
     MAX_SSH_INTERVAL_MINUTES,
+    MAX_DISCOVERY_TIMEOUT_SECONDS,
     MIN_DISCOVERY_INTERVAL_MINUTES,
+    MIN_DISCOVERY_TIMEOUT_SECONDS,
     MIN_SERVICE_INTERVAL_MINUTES,
     MIN_SSH_INTERVAL_MINUTES,
     MIN_STALE_DAYS,
 )
+from .coverage import derive_discovery_timeout
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +71,9 @@ class ScanSettings:
     discovery_interval: timedelta
     service_interval: timedelta
     ssh_interval: timedelta
+    # Seconds, not a timedelta: the scanner hands it straight to
+    # `asyncio.wait_for`, and converting twice is how a unit gets lost.
+    discovery_timeout: int
 
 
 def split_list(value: str | list | None) -> list[str]:
@@ -156,6 +163,42 @@ def resolve_settings(
             MIN_SSH_INTERVAL_MINUTES,
             MAX_SSH_INTERVAL_MINUTES,
         ),
+        discovery_timeout=_discovery_timeout(data, options, targets),
+    )
+
+
+def _discovery_timeout(
+    data: Mapping[str, Any], options: Mapping[str, Any], targets: list[str]
+) -> int:
+    """The liveness backstop: what was typed, or what the scope implies.
+
+    ABSENT IS NOT "USE A DEFAULT", IT IS "DERIVE". There is no sensible flat
+    number here -- the cost of a liveness sweep is a function of how much
+    address space the operator asked for, and the flat 300s this replaced
+    failed every sweep forever on a `/16` (GH-34). So an entry that has never
+    touched the field gets a budget that tracks its own scope.
+
+    A TYPED VALUE PINS IT, deliberately, and stops tracking scope. That is
+    what setting it means, and the form says so on the field; an override that
+    silently kept moving would not be an override.
+
+    Clamped on read like every other key here, because a hand-edited
+    `.storage` or bounds that moved between versions can both produce a value
+    the form would now refuse -- and a timeout below what a sweep needs kills
+    every sweep, which is the failure this whole key exists to end.
+    """
+    raw = options.get(CONF_DISCOVERY_TIMEOUT, data.get(CONF_DISCOVERY_TIMEOUT))
+    if raw is None or raw == "":
+        return derive_discovery_timeout(targets)
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        # Not a number at all, so it says nothing about how long to wait.
+        # Deriving is the honest answer, not a constant nobody chose.
+        return derive_discovery_timeout(targets)
+    return max(
+        MIN_DISCOVERY_TIMEOUT_SECONDS,
+        min(MAX_DISCOVERY_TIMEOUT_SECONDS, seconds),
     )
 
 

@@ -132,12 +132,14 @@
         "data": {
           "discovery_interval_minutes": "Discovery sweep",
           "service_interval_minutes": "Service and version scan",
-          "ssh_probe_interval_minutes": "SSH reachability probe"
+          "ssh_probe_interval_minutes": "SSH reachability probe",
+          "discovery_timeout_seconds": "Give up on a liveness sweep after"
         },
         "data_description": {
           "discovery_interval_minutes": "How often to check which devices are on the network. Cheap; hourly by default.",
           "service_interval_minutes": "How often to scan ports and identify services. Slow — a full sweep can run for many minutes — and daily by default.",
-          "ssh_probe_interval_minutes": "How often to try the SSH key against each host offering SSH. This authenticates against real machines, so a short interval fills their authentication logs. Every six hours by default."
+          "ssh_probe_interval_minutes": "How often to try the SSH key against each host offering SSH. This authenticates against real machines, so a short interval fills their authentication logs. Every six hours by default.",
+          "discovery_timeout_seconds": "How long one liveness sweep may run before it is killed. A backstop, not a schedule — too low kills healthy sweeps and nothing is recorded at all; too high only delays noticing a hung scan.\n\nUntil you set it, this is derived from how much address space you have asked to be scanned, and the box shows what that currently works out to. Saving this step pins the number, and it will stop tracking changes to Networks to scan."
         }
       },
       "acknowledged_macs": {

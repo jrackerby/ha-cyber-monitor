@@ -61,8 +61,10 @@ def load(name, filename):
     return mod
 
 
+const = load("const", "const.py")
 cov = load("coverage", "coverage.py")
 parse = load("parse", "parse.py")
+settings = load("settings", "settings.py")
 
 PASS = FAIL = 0
 
@@ -97,7 +99,9 @@ def live_macs(hosts):
     }
 
 
-NOW, EARLIER, OLD = "2026-09-21T08:07:14+00:00", "2026-09-20T11:14:58+00:00", "2026-09-16T17:42:15+00:00"
+NOW = "2026-09-21T08:07:14+00:00"
+EARLIER = "2026-09-20T11:14:58+00:00"
+OLD = "2026-09-16T17:42:15+00:00"
 _inv = {
     "a": {"mac": "AA", "last_seen": NOW, "status": "up"},
     "b": {"mac": "BB", "last_seen": EARLIER, "status": "up"},
@@ -173,52 +177,90 @@ check("nmap's octet range counts its own span",
 check("address_count takes targets only, never excludes",
       "exclude" in cov.address_count.__code__.co_varnames, False)
 
+_coord_src_early = open(os.path.join(PKG, "coordinator.py")).read()
 _scanner_src = open(os.path.join(PKG, "scanner.py")).read()
 _scanner = ast.parse(_scanner_src)
-_consts = {
-    node.targets[0].id: node.value.value
+_scanner_consts = {
+    node.targets[0].id
     for node in _scanner.body
-    if isinstance(node, ast.Assign)
-    and isinstance(node.targets[0], ast.Name)
-    and isinstance(node.value, ast.Constant)
+    if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
 }
-
-
-def timeout_for(targets):
-    """The bounded budget `scanner.discovery_timeout` computes."""
-    return int(max(
-        _consts["MIN_DISCOVERY_TIMEOUT"],
-        min(_consts["DEFAULT_TIMEOUT"],
-            cov.address_count(targets) * _consts["SECONDS_PER_ADDRESS"]),
-    ))
-
+_FLOOR = const.MIN_DISCOVERY_TIMEOUT_SECONDS
+_CEIL = const.MAX_DISCOVERY_TIMEOUT_SECONDS
 
 print("\nbounded at both ends, off the repo's own constants")
 check("a small scope keeps exactly the budget it has today",
-      timeout_for(["192.0.2.0/24"]), _consts["MIN_DISCOVERY_TIMEOUT"])
-check("the floor is the constant this replaced",
-      _consts["MIN_DISCOVERY_TIMEOUT"], 300)
+      cov.derive_discovery_timeout(["192.0.2.0/24"]), _FLOOR)
+check("the floor is the constant this replaced", _FLOOR, 300)
 # THE MOTIVATING SCOPE. 300s could never finish this, so it failed every time.
 check("a /16 gets more than the old flat timeout",
-      timeout_for(["10.77.0.0/16"]) > 300, True)
-check("and still less than the runaway backstop",
-      timeout_for(["10.77.0.0/16"]) < _consts["DEFAULT_TIMEOUT"], True)
+      cov.derive_discovery_timeout(["10.77.0.0/16"]) > 300, True)
+check("and still less than the ceiling",
+      cov.derive_discovery_timeout(["10.77.0.0/16"]) < _CEIL, True)
 check("a /8 is capped rather than unbounded",
-      timeout_for(["10.0.0.0/8"]), _consts["DEFAULT_TIMEOUT"])
-# An IPv6 prefix is larger than any integer budget should be multiplied out to
-# unbounded; the cap is what makes the arithmetic safe to do at all.
-check("a v6 prefix cannot park nmap for a week",
-      timeout_for(["2001:db8::/64"]), _consts["DEFAULT_TIMEOUT"])
-check("the bounds are coherent",
-      _consts["MIN_DISCOVERY_TIMEOUT"] < _consts["DEFAULT_TIMEOUT"], True)
-# ON THE PARSED NAMES, not the text: `MIN_DISCOVERY_TIMEOUT = 300` contains
-# "DISCOVERY_TIMEOUT = 300" as a substring, so a textual check for the old
-# constant passes forever and proves nothing.
-check("the flat constant is gone", "DISCOVERY_TIMEOUT" in _consts, False)
-check("and the floor replaced it under its own name",
-      "MIN_DISCOVERY_TIMEOUT" in _consts, True)
-check("the budget is derived, not looked up",
-      "def discovery_timeout" in _scanner_src, True)
+      cov.derive_discovery_timeout(["10.0.0.0/8"]), _CEIL)
+# An IPv6 prefix multiplies out past any sane budget; the cap is what makes
+# the arithmetic safe to do at all.
+check("a v6 prefix cannot park nmap indefinitely",
+      cov.derive_discovery_timeout(["2001:db8::/64"]), _CEIL)
+check("the bounds are coherent", _FLOOR < _CEIL, True)
+
+# THE CONSTANT MUST NOT LIVE IN scanner.py ANY MORE. A number that file owns,
+# while the scope it must cover is configured elsewhere, is the whole defect.
+for _dead in ("DISCOVERY_TIMEOUT", "MIN_DISCOVERY_TIMEOUT", "SECONDS_PER_ADDRESS"):
+    check(f"{_dead} is gone from scanner.py", _dead in _scanner_consts, False)
+check("the bounds live in const.py with every other bound",
+      (hasattr(const, "MIN_DISCOVERY_TIMEOUT_SECONDS"),
+       hasattr(const, "MAX_DISCOVERY_TIMEOUT_SECONDS")), (True, True))
+
+# --- the config key -------------------------------------------------------
+#
+# ONE DEFINITION, TWO CALLERS: the resolver falls back to exactly the function
+# the scanner falls back to, so a form's default and a sweep's real budget
+# cannot disagree -- the trap settings.py's header is written about.
+print("\nthe timeout is an options key, deriving only when unset")
+T = const.CONF_DISCOVERY_TIMEOUT
+TARGETS = const.CONF_TARGETS
+_SCOPE = {TARGETS: "10.77.0.0/16"}
+
+
+def resolved(data, options=None):
+    return settings.resolve_settings(data, options or {}).discovery_timeout
+
+
+check("unset derives from the configured scope",
+      resolved(_SCOPE), cov.derive_discovery_timeout(["10.77.0.0/16"]))
+check("and a different scope derives differently",
+      resolved({TARGETS: "192.0.2.0/24"}), _FLOOR)
+check("a typed value wins over the derivation",
+      resolved(_SCOPE, {T: 900}), 900)
+check("the options value beats a data value",
+      resolved({**_SCOPE, T: 600}, {T: 900}), 900)
+check("a data value is still honoured when options has none",
+      resolved({**_SCOPE, T: 600}), 600)
+
+print("\nand a stored value is clamped, never obeyed out of range")
+# A TIMEOUT BELOW WHAT A SWEEP NEEDS KILLS EVERY SWEEP -- the exact failure
+# this key exists to end, so the floor is the one that really matters.
+check("below the floor clamps up", resolved(_SCOPE, {T: 1}), _FLOOR)
+check("zero does not mean 'give up immediately'",
+      resolved(_SCOPE, {T: 0}), _FLOOR)
+check("a negative clamps up too", resolved(_SCOPE, {T: -5}), _FLOOR)
+check("above the ceiling clamps down", resolved(_SCOPE, {T: 10 ** 9}), _CEIL)
+check("a non-number derives rather than guessing a constant",
+      resolved(_SCOPE, {T: "ages"}),
+      cov.derive_discovery_timeout(["10.77.0.0/16"]))
+check("an empty string derives too",
+      resolved(_SCOPE, {T: ""}),
+      cov.derive_discovery_timeout(["10.77.0.0/16"]))
+
+print("\nthe sweep is handed the resolved budget, not a constant")
+check("the scheduled discovery sweep passes it",
+      "timeout=settings.discovery_timeout" in _coord_src_early, True)
+check("both discovery sweeps do",
+      _coord_src_early.count("timeout=settings.discovery_timeout"), 2)
+check("the scanner's fallback is the same shared function",
+      "derive_discovery_timeout(targets or [])" in _scanner_src, True)
 
 # --- GH-34: a failing sweep must stamp what it attempted -------------------
 #

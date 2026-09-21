@@ -42,6 +42,12 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from .const import (
+    DISCOVERY_SECONDS_PER_ADDRESS,
+    MAX_DISCOVERY_TIMEOUT_SECONDS,
+    MIN_DISCOVERY_TIMEOUT_SECONDS,
+)
+
 # nmap's own last-octet range form, the second shape `options.validate_target`
 # accepts. Restated here rather than imported because this module reads it to
 # find a SPAN and that one reads it to refuse an argument; the two questions
@@ -263,3 +269,24 @@ def address_count(targets: Iterable[str]) -> int:
         span = address_span(target)
         total += (span.last - span.first + 1) if span else 1
     return total
+
+
+def derive_discovery_timeout(targets: Iterable[str]) -> int:
+    """The liveness backstop for this scope, when nobody has typed one.
+
+    ONE DEFINITION, TWO CALLERS. `settings.resolve_settings` uses it as the
+    fallback behind the config key, and `scanner._run` uses it for any caller
+    that passes no timeout at all. A second copy of this arithmetic is exactly
+    how a form's default and a sweep's actual budget end up disagreeing, which
+    is the trap `settings.py`'s header is written about.
+
+    Bounded at both ends by the constants the form also validates against, so
+    a derived budget and a typed one are drawn from the same range.
+    """
+    seconds = address_count(targets) * DISCOVERY_SECONDS_PER_ADDRESS
+    return int(
+        max(
+            MIN_DISCOVERY_TIMEOUT_SECONDS,
+            min(MAX_DISCOVERY_TIMEOUT_SECONDS, seconds),
+        )
+    )
