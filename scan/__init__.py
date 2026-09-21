@@ -241,7 +241,12 @@ async def async_remove_scan_device(
     if entry.entry_id in ours:
         return False
 
-    live = set(coordinator.data.endpoints) if coordinator.data else set()
-    # Refuse while the endpoint is still being seen -- it would reappear on the
-    # next refresh, which reads as the delete having silently failed.
+    # `live_endpoints`, NOT `endpoints`. The latter is the whole persisted
+    # inventory, so this guard refused every endpoint the integration had ever
+    # recorded -- which is every endpoint on the device page (GH-33). Refuse
+    # only while the host is still being seen, where "seen" is what the most
+    # recent scan actually observed.
+    live = set(coordinator.data.live_endpoints) if coordinator.data else set()
+    # It would reappear on the next refresh, which reads as the delete having
+    # silently failed.
     return not (ours & live)

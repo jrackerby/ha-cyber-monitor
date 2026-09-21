@@ -217,10 +217,19 @@ check("the scope stamp covers exclude as well as targets",
 # button stamped the scope and did nothing else with the sweep). So the gate
 # is that the stamp exists in exactly one place and that all three paths go
 # through it -- three literal stamps would now mean the copies came back.
-check("the scope is stamped in exactly one place",
-      _coord.count("self._swept_scope = self._scope_of("), 1)
-check("and all three full sweeps go through that place",
+# TWO SITES, AND EXACTLY TWO. One is the shared fold-in every successful full
+# sweep goes through. The other is `_run_discovery`'s ScanError handler, which
+# stamps the scope it ATTEMPTED (GH-34): without it, a sweep that can never
+# finish leaves `_scope_changed` true and re-launches on every five-minute
+# tick forever. A third would mean the copies GH-31 removed had come back.
+check("the scope is stamped in exactly two places",
+      _coord.count("self._swept_scope = self._scope_of("), 2)
+check("and all three full sweeps go through the shared one",
       _coord.count("self._fold_in_full_sweep(settings, result, prune="), 3)
+check("the second is the failure path, not a fourth sweep",
+      "self._swept_scope = self._scope_of(settings)"
+      in _coord[_coord.index("discovery sweep failed"):
+                _coord.index("async def _run_service_scan")], True)
 
 # --- every step and field the options flow shows has a string --------------
 print("\noptions flow <-> strings.json must not drift")

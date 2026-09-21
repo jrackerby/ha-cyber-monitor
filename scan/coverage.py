@@ -241,3 +241,25 @@ def unreachable(streaks: Mapping[str, int], threshold: int) -> tuple[str, ...]:
     whenever the streaks happen to be rebuilt in a different order.
     """
     return tuple(sorted(t for t, n in streaks.items() if n >= threshold))
+
+
+def address_count(targets: Iterable[str]) -> int:
+    """How many addresses a sweep of this scope has to probe.
+
+    EXCLUDES ARE NOT SUBTRACTED, deliberately. The only caller is a runaway
+    TIMEOUT, so an over-estimate costs a scan that is allowed to run longer
+    than it needed, and an under-estimate kills a healthy sweep. Overlapping
+    excludes would also have to be merged before they could be subtracted
+    honestly, and getting that subtly wrong is the failure that shortens a
+    timeout below what the sweep actually needs.
+
+    A HOSTNAME COUNTS AS ONE ADDRESS. It names no span without a resolver
+    (`address_span` returns None), and one host is what a name resolves to in
+    the ordinary case. Counting it as zero would let a scope of nothing but
+    names compute a timeout of nothing.
+    """
+    total = 0
+    for target in targets:
+        span = address_span(target)
+        total += (span.last - span.first + 1) if span else 1
+    return total

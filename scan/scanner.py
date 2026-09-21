@@ -33,6 +33,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
+from .coverage import address_count
 from .options import build_args
 from .parse import parse_scan
 
@@ -44,9 +45,28 @@ _LOGGER = logging.getLogger(__name__)
 # backstop, not a schedule.
 DEFAULT_TIMEOUT = 3600
 
-# A liveness sweep should never take this long; if it does, something is wrong
-# with the interface rather than with the network.
-DISCOVERY_TIMEOUT = 300
+# A LIVENESS SWEEP'S BACKSTOP IS DERIVED FROM THE SCOPE, not fixed, because
+# the scope is the operator's to set and a `/16` is an ordinary answer under
+# Configure -> Networks to scan. A flat 300s was the constant this file's
+# neighbour `const.py` forbids ("every address, credential and interval is
+# config-entry data rather than a constant"): it silently contradicted the
+# configuration, and a scope it could not finish failed EVERY time, forever.
+# Measured on a live estate: 31 consecutive sweeps killed at 300s, nothing
+# merged and nothing pruned for 9.4 hours (GH-34).
+#
+# THE FLOOR IS THE OLD CONSTANT, so no existing small scope gets a shorter
+# timeout than it has today, and the ceiling is DEFAULT_TIMEOUT, which is
+# already this file's runaway backstop for the expensive scans. Between them
+# the budget is per address, because that is what a liveness sweep's cost
+# actually scales with -- one probe per address, at high parallelism.
+#
+# THE RATE IS DELIBERATELY GENEROUS. This is a backstop, not a schedule (see
+# DEFAULT_TIMEOUT): being late to kill a hung scan costs one sweep's latency,
+# while being early kills healthy sweeps and is the defect above. A routed
+# subnet with no ARP shortcut is far slower per address than a local one, and
+# the rate has to cover that case rather than the fast one.
+MIN_DISCOVERY_TIMEOUT = 300
+SECONDS_PER_ADDRESS = 0.05
 
 # nmap writes progress and warnings to stderr in normal operation, so stderr is
 # NOT an error signal. Only this much is kept for diagnostics.
@@ -78,6 +98,24 @@ class ScanResult:
     @property
     def host_count(self) -> int:
         return len(self.hosts)
+
+
+def discovery_timeout(targets: list[str]) -> int:
+    """How long a liveness sweep of `targets` may run before it is killed.
+
+    Bounded at both ends: never shorter than MIN_DISCOVERY_TIMEOUT, so a small
+    scope keeps exactly the budget it has today, and never longer than
+    DEFAULT_TIMEOUT, so a `::/0` typo cannot park an nmap process for a week.
+    Between them it scales with the number of addresses the operator asked to
+    be probed -- see the constants above for why that is a backstop rather
+    than an estimate.
+    """
+    return int(
+        max(
+            MIN_DISCOVERY_TIMEOUT,
+            min(DEFAULT_TIMEOUT, address_count(targets) * SECONDS_PER_ADDRESS),
+        )
+    )
 
 
 def find_nmap() -> str | None:
@@ -165,15 +203,29 @@ class NmapScanner:
         async with self._lock:
             self._current = label
             try:
-                return await self._run(args, timeout, discovery_only)
+                # `targets`, the caller's list: `build_args` above has already
+                # run `validate_target` over every one of them and raises on a
+                # bad one, so anything reaching here is a shape
+                # `address_count` understands.
+                return await self._run(
+                    args, timeout, discovery_only, targets=targets
+                )
             finally:
                 self._current = None
 
     async def _run(
-        self, args: list[str], timeout: int | None, discovery_only: bool
+        self,
+        args: list[str],
+        timeout: int | None,
+        discovery_only: bool,
+        targets: list[str] | None = None,
     ) -> ScanResult:
         if timeout is None:
-            timeout = DISCOVERY_TIMEOUT if discovery_only else DEFAULT_TIMEOUT
+            timeout = (
+                discovery_timeout(targets or [])
+                if discovery_only
+                else DEFAULT_TIMEOUT
+            )
 
         _LOGGER.debug("running: %s %s", self._binary, " ".join(args))
         started = asyncio.get_running_loop().time()
