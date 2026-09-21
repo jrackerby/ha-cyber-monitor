@@ -172,6 +172,12 @@
       "invalid_target": "That is not an address, range or hostname nmap will accept. Nothing was saved."
     }
   },
+  "issues": {
+    "empty_targets": {
+      "title": "Cyber Monitor is scanning address space that answers nothing",
+      "description": "The configured scan target(s) **{targets}** have answered with no hosts at all for {sweeps} consecutive full sweeps.\n\nThat is what a network that has been re-addressed or decommissioned looks like from here: the sweeps succeed, find nothing, and report clean — which is indistinguishable from a quiet network unless something says so. It can also mean the hosts are simply switched off, or that Home Assistant has no route to that range any more.\n\nCheck the range still exists, then edit it under **Configure → Networks to scan** on this integration's entry. That edit takes effect on the next sweep without a reload and without touching the scan history. This message clears itself once a sweep finds something there, or once the target is removed."
+    }
+  },
   "entity": {
     "sensor": {
       "actionable": {

@@ -84,8 +84,35 @@ scanner agent, the targets live in that host's own `scan.sh` and the schedule in
 its `nmap-scan@<profile>.timer` units; the agent's v1 API exposes no interval,
 so those steps are not offered rather than offered and ignored.
 
+**Reconfigure** (the entry's ⋮ menu) takes the rest — the NVD key, the agent
+address and token, the nmap data directory, the SSH settings, and how long an
+unseen device is remembered. Every one of those is read once at startup, so that
+form reloads the integration when it saves; it deliberately does not offer the
+scan scope, because a key with two editors has one that is silently inert.
+
 Requires `feedparser` and `python-dateutil`, declared in the manifest and
 installed by Home Assistant.
+
+### After the monitored network is re-addressed
+
+Change the subnets under *Configure → Networks to scan*, **not** Reconfigure.
+The edit lands on the next sweep, with no reload and without touching the scan
+history, so the `first_seen` date of every device that moved to the new
+addressing survives the change. Devices left behind on the old ranges are not
+deleted when the target goes: they stop being seen, their entities go
+unavailable, and their records age out after the retention window (*Forget a
+device unseen for this many days*, under Reconfigure) — or can be removed one at
+a time from their device pages.
+
+**The integration will tell you if you forget.** A configured target that
+answers with no hosts at all for three consecutive full sweeps raises a repair
+under *Settings → Repairs* naming the targets. That is the one failure a scanner
+cannot report by scanning: address space that no longer exists answers nothing,
+the sweep succeeds, and the result is indistinguishable from a quiet network. A
+target
+that is entirely inside the exclude list, or that names a hostname rather than
+an address range, is never reported this way — it cannot be measured from a scan
+result, and "unmeasured" is a different answer from "empty".
 
 ## Actions
 

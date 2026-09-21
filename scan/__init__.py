@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from ..const import DOMAIN  # real top-level domain -- see scan/const.py's note
@@ -31,18 +32,21 @@ from .const import (
     CONF_SSH_ENABLED,
     CONF_SSH_KEY,
     CONF_SSH_USERS,
-    CONF_STALE_DAYS,
     CONF_TOKEN,
     CONF_USE_TLS,
     CONF_VERIFY_SSL,
-    DEFAULT_STALE_DAYS,
     MODE_LOCAL,
 )
-from .coordinator import AgentCoordinator, LocalCoordinator, NetworkInventoryCoordinator
+from .coordinator import (
+    AgentCoordinator,
+    LocalCoordinator,
+    NetworkInventoryCoordinator,
+    empty_targets_issue_id,
+)
 from .entity import scanner_device_info
 from .scan_service import async_register_services, async_unregister_services
 from .scanner import find_nmap
-from .settings import resolve_settings, split_list
+from .settings import resolve_settings, resolve_stale_days, split_list
 from .ssh_probe import SshProber, find_ssh
 from .store import InventoryStore
 
@@ -150,7 +154,15 @@ async def _async_setup_local(
         # sweep without a reload; this is what it falls back to if the entry
         # cannot be read.
         settings=resolve_settings(entry.data, entry.options),
-        stale_days=int(entry.data.get(CONF_STALE_DAYS, DEFAULT_STALE_DAYS)),
+        # `data` ALONE, AND ONLY HERE, BY DESIGN -- not the oversight the pair
+        # of lines looks like (GH-29). `stale_days` is edited by RECONFIGURE,
+        # which writes `entry.data` and reloads, so this read is how an edit
+        # takes effect; the options flow deliberately does not offer it,
+        # because a key with two editors has one that is silently inert (see
+        # `config_flow.py`'s header). `resolve_stale_days` carries the rest of
+        # the reasoning and the clamp that keeps a hand-edited number from
+        # deleting the inventory.
+        stale_days=resolve_stale_days(entry.data),
         prober=prober,
         config_entry_id=entry.entry_id,
     )
@@ -199,6 +211,11 @@ async def async_remove_scan_entry(hass: HomeAssistant, entry: ConfigEntry) -> No
     """
     if entry.data.get(CONF_MODE) == MODE_LOCAL:
         await InventoryStore(hass, entry.entry_id).async_remove()
+    # A repair outlives the coordinator that raised it, and the issue registry
+    # is not cleared by removing an entry. One about targets nobody scans any
+    # more is a warning that cannot be acted on or dismissed by fixing
+    # anything -- so it goes with the subject it is about.
+    ir.async_delete_issue(hass, DOMAIN, empty_targets_issue_id(entry.entry_id))
 
 
 async def async_remove_scan_device(
