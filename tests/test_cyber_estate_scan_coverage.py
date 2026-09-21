@@ -295,8 +295,13 @@ check("stale_days is on that step's own form",
 # --- the coordinator side --------------------------------------------------
 print("\nthe coordinator measures coverage on every full scheduled sweep")
 _coord = open(os.path.join(PKG, "coordinator.py")).read()
-check("both scheduled sweeps record what they covered",
-      _coord.count("self._record_coverage(settings, result)"), 2)
+# ONE CALL, THREE CALLERS. `_fold_in_full_sweep` is what every whole-scope
+# sweep goes through (GH-31), so coverage is measured there rather than copied
+# into each path -- a fourth path added later gets it by construction.
+check("coverage is recorded in exactly one place",
+      _coord.count("self._record_coverage(settings, result)"), 1)
+check("and every full sweep goes through it",
+      _coord.count("self._fold_in_full_sweep(settings, result, prune="), 3)
 check("an incomplete sweep is not a measurement",
       "if not result.complete:" in _coord, True)
 check("the streak table starts empty in each process",

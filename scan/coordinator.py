@@ -536,11 +536,7 @@ class LocalCoordinator(NetworkInventoryCoordinator):
             _LOGGER.warning("discovery sweep failed: %s", err)
             return
         self._last_discovery = dt_util.utcnow()
-        self._swept_scope = self._scope_of(settings)
-        self._record_coverage(settings, result)
-        self.store.apply_scan(
-            result.hosts, complete=result.complete, stale_days=self.stale_days
-        )
+        self._fold_in_full_sweep(settings, result, prune=True)
 
     async def _run_service_scan(self) -> None:
         keys = list(OPTION_PROFILES["standard"])
@@ -571,11 +567,7 @@ class LocalCoordinator(NetworkInventoryCoordinator):
         # A liveness sweep is implied by a service scan, so the discovery clock
         # resets too -- otherwise the next tick immediately runs a redundant one.
         self._last_discovery = self._last_service_scan
-        self._swept_scope = self._scope_of(settings)
-        self._record_coverage(settings, result)
-        self.store.apply_scan(
-            result.hosts, complete=result.complete, stale_days=self.stale_days
-        )
+        self._fold_in_full_sweep(settings, result, prune=True)
 
     async def _run_ssh_probe(self) -> None:
         """Probe every host seen offering ssh. Never probes an unscanned host.
@@ -614,6 +606,50 @@ class LocalCoordinator(NetworkInventoryCoordinator):
 
         self._last_ssh_probe = dt_util.utcnow()
         self._ssh = results
+
+    # -- folding a whole-scope sweep back in ----------------------------------
+
+    def _fold_in_full_sweep(
+        self, settings: ScanSettings, result, *, prune: bool
+    ) -> None:
+        """Record what a sweep of the WHOLE live scope covered, and keep it.
+
+        THREE PATHS RUN A FULL SWEEP and each has to do the same three things:
+        stamp the scope it actually covered, measure which targets answered,
+        and merge the hosts into the store. They were three copies, and one of
+        them -- the on-demand `discovery` profile behind the Scan now button --
+        did the first and neither of the others, so that press put a real sweep
+        on the wire, moved the discovery clock (suppressing the next scheduled
+        sweep for a full interval) and then threw away everything it found
+        (GH-31). A new host plugged in and scanned for deliberately did not
+        appear, and nothing said why. One function, three callers, so the next
+        path added cannot quietly omit a step.
+
+        PRUNING IS THE ONE THING THEY DO NOT SHARE, so it is a required keyword
+        rather than a default: SCHEDULED SWEEPS AGE THE INVENTORY, OPERATOR-
+        INITIATED ONES NEVER DO. Forgetting a host destroys its `first_seen`,
+        which no amount of rescanning recovers, so it belongs to the clock that
+        runs whether anybody is watching -- not to a button somebody pressed
+        for an unrelated reason. `async_run_custom_scan` already refuses to
+        prune for the narrower version of the same argument (it is commonly
+        aimed at one host); this is that rule stated once for every on-demand
+        path, including the whole-scope ones, rather than per call site.
+
+        `store.apply_scan` still refuses to prune an INCOMPLETE sweep whatever
+        it is passed, so `prune=True` means "age the inventory if this sweep is
+        entitled to", never "age it regardless".
+        """
+        # STAMPS THE SCOPE, not just the clock. A sweep that moved the clock
+        # without recording what it covered would leave the next tick seeing an
+        # unswept scope and launching an identical sweep -- pressing Scan now
+        # right after adding a subnet would scan twice.
+        self._swept_scope = self._scope_of(settings)
+        self._record_coverage(settings, result)
+        self.store.apply_scan(
+            result.hosts,
+            complete=result.complete,
+            stale_days=self.stale_days if prune else None,
+        )
 
     # -- did the targets answer at all ---------------------------------------
 
@@ -720,18 +756,21 @@ class LocalCoordinator(NetworkInventoryCoordinator):
         dispatched separately rather than being given a fake option set.
         """
         if profile == "discovery":
-            # STAMPS THE SCOPE, not just the clock. This sweep covers the whole
-            # live target set, so leaving `_swept_scope` behind would make the
-            # next tick see an unswept scope and launch an identical sweep --
-            # pressing Scan now right after adding a subnet would scan twice.
             settings = self.settings
-            await self.scanner.async_scan(
+            result = await self.scanner.async_scan(
                 list(settings.targets), exclude=list(settings.exclude),
                 discovery_only=True, label="discovery",
             )
             self._last_discovery = dt_util.utcnow()
-            self._swept_scope = self._scope_of(settings)
             await self.store.async_load()
+            # THE RESULT IS BOUND AND KEPT. It used to be discarded: this
+            # branch swept the whole scope, stamped the clock and published the
+            # inventory exactly as it stood before the scan, so pressing Scan
+            # now for this profile cost a sweep, suppressed the next scheduled
+            # one for a full interval, and recorded nothing (GH-31).
+            # `prune=False` because a sweep somebody asked for never ages the
+            # inventory -- see `_fold_in_full_sweep`.
+            self._fold_in_full_sweep(settings, result, prune=False)
             self.async_set_updated_data(self._build_view())
             return
         keys = list(OPTION_PROFILES.get(profile, ()))

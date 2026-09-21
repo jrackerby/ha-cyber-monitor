@@ -212,8 +212,15 @@ check("the scope stamp covers exclude as well as targets",
 # scan and the Scan now button all cover the whole live scope; one that
 # stamped the clock but not the scope would leave the next tick launching a
 # second, identical sweep.
-check("all three full sweeps stamp the scope",
-      _coord.count("self._swept_scope = self._scope_of("), 3)
+#
+# THE THREE COPIES ARE NOW ONE FUNCTION (GH-31: the copy behind the Scan now
+# button stamped the scope and did nothing else with the sweep). So the gate
+# is that the stamp exists in exactly one place and that all three paths go
+# through it -- three literal stamps would now mean the copies came back.
+check("the scope is stamped in exactly one place",
+      _coord.count("self._swept_scope = self._scope_of("), 1)
+check("and all three full sweeps go through that place",
+      _coord.count("self._fold_in_full_sweep(settings, result, prune="), 3)
 
 # --- every step and field the options flow shows has a string --------------
 print("\noptions flow <-> strings.json must not drift")
