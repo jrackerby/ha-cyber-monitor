@@ -33,9 +33,11 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from ..const import DOMAIN  # real top-level domain -- see scan/const.py's note
 from .api import (
     CannotConnect,
     Inventory,
@@ -46,10 +48,12 @@ from .api import (
 )
 from .const import (
     CONF_ACKNOWLEDGED_MACS,
+    EMPTY_TARGET_SWEEPS,
     LOCAL_TICK,
     SCAN_NS,
     UPDATE_INTERVAL,
 )
+from .coverage import coverage, host_addresses, unreachable, update_streaks
 from .join import JoinResult, join_hosts, normalise_mac
 from .options import PROFILES as OPTION_PROFILES
 from .scanner import NmapScanner, ScanBusy, ScanError
@@ -59,6 +63,22 @@ from .ssh_probe import SshProber, SshResult, host_runs_ssh, ssh_ports
 from .store import InventoryStore
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def empty_targets_issue_id(config_entry_id: str | None) -> str:
+    """The repair id for "these targets answer nothing", per config entry.
+
+    ONE ISSUE PER ENTRY, NOT PER TARGET, so the condition can clear itself. A
+    restart empties the streak table, and the first complete sweep afterwards
+    either rewrites this issue with what it just measured or deletes it. A
+    per-target issue could not do that for a target that has since been removed
+    from the scope: the repair would outlive the setting it is about, and
+    nothing left in the configuration would explain it.
+
+    Derived rather than stored, so `async_remove_scan_entry` can clear the
+    repair for an entry whose coordinator is already gone.
+    """
+    return f"empty_targets_{config_entry_id}"
 
 
 @dataclass(slots=True)
@@ -321,6 +341,10 @@ class LocalCoordinator(NetworkInventoryCoordinator):
         # The scope the last full sweep actually covered. None until one has
         # run in this process -- see `_scope_changed`.
         self._swept_scope: tuple[frozenset[str], frozenset[str]] | None = None
+        # Per-target count of consecutive full sweeps that found nothing there.
+        # Empty at construction, so what this process reports is what this
+        # process measured -- see `_record_coverage`.
+        self._empty_sweeps: dict[str, int] = {}
 
     # -- scope and schedule --------------------------------------------------
 
@@ -513,6 +537,7 @@ class LocalCoordinator(NetworkInventoryCoordinator):
             return
         self._last_discovery = dt_util.utcnow()
         self._swept_scope = self._scope_of(settings)
+        self._record_coverage(settings, result)
         self.store.apply_scan(
             result.hosts, complete=result.complete, stale_days=self.stale_days
         )
@@ -547,6 +572,7 @@ class LocalCoordinator(NetworkInventoryCoordinator):
         # resets too -- otherwise the next tick immediately runs a redundant one.
         self._last_discovery = self._last_service_scan
         self._swept_scope = self._scope_of(settings)
+        self._record_coverage(settings, result)
         self.store.apply_scan(
             result.hosts, complete=result.complete, stale_days=self.stale_days
         )
@@ -588,6 +614,73 @@ class LocalCoordinator(NetworkInventoryCoordinator):
 
         self._last_ssh_probe = dt_util.utcnow()
         self._ssh = results
+
+    # -- did the targets answer at all ---------------------------------------
+
+    def _record_coverage(self, settings: ScanSettings, result) -> None:
+        """Notice a configured target that a full sweep found nothing in.
+
+        THIS IS THE ONE THING A CLEAN REPORT CANNOT DISTINGUISH FROM ITSELF.
+        After the estate was re-addressed, three deleted subnets were swept for
+        a day: no error, no finding, no unknown host -- identical output to a
+        quiet network, and it surfaced only because an unrelated IPS started
+        mailing about a host enumerating dead ranges (GH-29). An empty target
+        is not proof the range is gone, so this reports rather than acts.
+
+        ONLY A COMPLETE SWEEP COUNTS. `ScanResult.complete` is False when nmap
+        exited non-zero or was killed mid-run, and the repo's rule for that
+        case is already written down in `store.apply_scan`: the hosts present
+        are real, the ABSENCE of a host means nothing. Counting an interrupted
+        sweep here would let one timeout start a streak toward announcing that
+        the network has disappeared.
+        """
+        if not result.complete:
+            return
+
+        found = coverage(
+            settings.targets, settings.exclude, host_addresses(result.hosts)
+        )
+        self._empty_sweeps = update_streaks(self._empty_sweeps, found)
+        self._sync_empty_target_issue()
+
+    def _sync_empty_target_issue(self) -> None:
+        """Raise, rewrite or clear the repair for targets that answer nothing.
+
+        A REPAIR RATHER THAN A LOG LINE, because the failure mode is that
+        nobody was told. The log already carries every sweep; what was missing
+        was something in front of the operator saying the scanner is sweeping
+        address space that answers nothing at all. It is not fixable in place
+        -- the fix is an edit to the scan scope, which lives in the options
+        flow and is where the description points.
+        """
+        dead = unreachable(self._empty_sweeps, EMPTY_TARGET_SWEEPS)
+        if not dead:
+            # Unconditional, and cheap when there is nothing to delete. This is
+            # what clears a repair raised before a restart or before the scope
+            # was corrected, without this process having to remember raising it.
+            ir.async_delete_issue(
+                self.hass, DOMAIN, empty_targets_issue_id(self.config_entry_id)
+            )
+            return
+
+        _LOGGER.warning(
+            "configured scan target(s) %s have answered with no hosts for %d "
+            "consecutive full sweeps; the address space may no longer exist",
+            ", ".join(dead),
+            EMPTY_TARGET_SWEEPS,
+        )
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            empty_targets_issue_id(self.config_entry_id),
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="empty_targets",
+            translation_placeholders={
+                "targets": ", ".join(dead),
+                "sweeps": str(EMPTY_TARGET_SWEEPS),
+            },
+        )
 
     # -- on demand -----------------------------------------------------------
 

@@ -42,16 +42,19 @@ from .const import (
     CONF_EXCLUDE,
     CONF_SERVICE_INTERVAL,
     CONF_SSH_INTERVAL,
+    CONF_STALE_DAYS,
     CONF_TARGETS,
     DEFAULT_DISCOVERY_INTERVAL_MINUTES,
     DEFAULT_SERVICE_INTERVAL_MINUTES,
     DEFAULT_SSH_INTERVAL_MINUTES,
+    DEFAULT_STALE_DAYS,
     MAX_DISCOVERY_INTERVAL_MINUTES,
     MAX_SERVICE_INTERVAL_MINUTES,
     MAX_SSH_INTERVAL_MINUTES,
     MIN_DISCOVERY_INTERVAL_MINUTES,
     MIN_SERVICE_INTERVAL_MINUTES,
     MIN_SSH_INTERVAL_MINUTES,
+    MIN_STALE_DAYS,
 )
 
 
@@ -154,3 +157,43 @@ def resolve_settings(
             MAX_SSH_INTERVAL_MINUTES,
         ),
     )
+
+
+def resolve_stale_days(data: Mapping[str, Any]) -> int:
+    """How long a host may go unseen before its record is forgotten.
+
+    READ FROM `data` ALONE, AND THAT IS NOT THE OVERSIGHT IT LOOKS LIKE. Every
+    other key in this module has an options editor and is re-read per sweep;
+    `stale_days` has a RECONFIGURE editor (`async_step_reconfigure_local`),
+    which writes `entry.data` and reloads the entry, so setup reads the new
+    value on the way back up. It is deliberately not in the options flow:
+    `config_flow.py`'s header rule is that no key gets two editors, because the
+    loser goes silently inert. If it ever gains an options field, this function
+    is where the `entry.options` fallback belongs -- not a second `.get` at the
+    call site (GH-29 read the pair of lines in `scan/__init__.py` as a bug for
+    exactly this reason, and the missing thing was this explanation).
+
+    A STORED NUMBER BELOW THE FLOOR RESOLVES TO THE DEFAULT, NOT TO THE FLOOR,
+    which is the one place this departs from `clamp_minutes`. Saturating an
+    out-of-range interval merely scans more often than asked; saturating this
+    one DELETES. `stale_days=1` forgets every device switched off for a day,
+    along with the `first_seen` date that cannot be recovered by scanning
+    harder -- so a 0 that someone hand-wrote meaning "never prune" would be
+    honoured by destroying the inventory. Negative is worse and is the reason
+    this function exists at all: `parse.prune` puts the cutoff in the FUTURE,
+    every host reads as stale, and one sweep erases the whole network's
+    history. The form cannot produce either value; a hand-edited `.storage`
+    file and bounds that moved between versions both can.
+
+    NO CEILING, matching the form, which has `vol.Range(min=...)` and no `max`.
+    Retention longer than a month is an ordinary preference and the only cost
+    of an absurd value is disk.
+    """
+    raw = data.get(CONF_STALE_DAYS, DEFAULT_STALE_DAYS)
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_STALE_DAYS
+    if days < MIN_STALE_DAYS:
+        return DEFAULT_STALE_DAYS
+    return days

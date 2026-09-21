@@ -75,7 +75,24 @@ DEFAULT_STALE_DAYS = 30
 # How long a host may go unseen before its record is forgotten. Deliberately
 # generous: a device switched off for a fortnight is normal, and forgetting it
 # destroys `first_seen`, which cannot be recovered by scanning harder.
+#
+# A FLOOR WITH NO CEILING, and the floor is not a clamp target: a stored value
+# under it resolves to the DEFAULT, because saturating to 1 day would forget
+# every device switched off since yesterday. `settings.resolve_stale_days`
+# carries that reasoning; this constant is only the form's `vol.Range(min=)`.
 MIN_STALE_DAYS = 1
+
+# HOW MANY CONSECUTIVE FULL SWEEPS A CONFIGURED TARGET MAY ANSWER WITH NOTHING
+# before the integration says so out loud (`scan/coverage.py`). The condition
+# being caught is address space that no longer exists -- a re-addressed estate
+# left this scanner sweeping three deleted subnets and reporting CLEAN, which
+# renders identically to a quiet network (GH-29).
+#
+# THREE, not one. A subnet whose every host is asleep at 04:00 is an ordinary
+# night; three sweeps in a row is not, and at the default hourly discovery
+# interval that is a few hours rather than a few weeks. Raising it makes the
+# report later, not safer -- the whole failure is that nothing was said at all.
+EMPTY_TARGET_SWEEPS = 3
 
 # The agent's API version this client speaks. The agent reports its own
 # `schema_version` in every payload and the two are compared on every refresh,

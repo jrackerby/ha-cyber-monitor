@@ -75,7 +75,10 @@ config-entry UI, not for shared logic. See
   - **Local mode fields**: `targets` (comma-separated addresses/CIDRs,
     required), `exclude`, `datadir` (nmap NSE script-engine tree — HA's
     bundled nmap ships without one; blank disables service/version
-    detection), `stale_days` (default 30, floor 1), `ssh_probe_enabled`
+    detection), `stale_days` (default 30, floor 1 — edited afterwards by
+    RECONFIGURE, which writes `entry.data` and reloads, never by the options
+    flow; a stored value under the floor resolves to the default rather than
+    saturating, see `settings.resolve_stale_days`), `ssh_probe_enabled`
     (default on), `ssh_key` (default `/config/.ssh/kiosk_key`),
     `ssh_users` (default `kiosk, root`). Validated at submit time
     (`validate_target()` per address, `find_nmap()` checked live) — a
@@ -303,6 +306,9 @@ Normal/Elevated/Critical bands." Verified this session against
 | scan/: an operator-acknowledged MAC (multi-NIC device, e.g. the UDM Pro answering ARP on a second interface) | Moved to a separate `acknowledged` bucket, still visible on `unknown_hosts`' own attributes, does not count toward the state | "We decided this one is fine" and "this one never appeared" must not collapse into the same zero (KAN-294) |
 | scan/: a departed endpoint stops answering | Entities go unavailable and **stay** — never auto-deleted | The scanner cannot tell "left" from "switched off"; auto-deleting would destroy `first_seen`, which cannot be recovered by scanning harder |
 | scan/: device-removal requested for the scanner device itself, or for an endpoint still present in the live inventory | Refused (`async_remove_scan_device` returns `False`) | Removing the scanner would strand every endpoint's `via_device`; removing a still-live endpoint would silently reappear next refresh, reading as a failed delete |
+| scan/ (local): a configured target answers with no hosts across `EMPTY_TARGET_SWEEPS` consecutive **complete** sweeps | A repair issue (`empty_targets`, one per entry) names the targets and points at *Configure → Networks to scan*; the sweep itself is unaffected | Address space that no longer exists answers nothing, so the sweep succeeds and reports clean — indistinguishable from a quiet network. Measured: three deleted `192.168.x` subnets swept for a day after a VLAN migration, found only because an unrelated IPS mailed about a host enumerating dead ranges (GH-29) |
+| scan/ (local): a target that cannot be measured from a scan result — a hostname, or one wholly inside the exclude list | Never counted as empty, never reported | A hostname names no address span without a resolver and an excluded range is empty by instruction; reporting either would raise a repair every sweep forever, which teaches the operator to ignore the one that matters |
+| scan/ (local): `stale_days` stored below its floor, negative, or non-numeric (hand-edited `.storage`, or bounds that moved between versions) | `settings.resolve_stale_days` returns the DEFAULT, not the floor | Saturating to the 1-day floor forgets every device switched off since yesterday; a negative puts `prune`'s cutoff in the future and one sweep erases the whole inventory's `first_seen` |
 | scan/: SSH probe against an unrecognized failure string | Reported as `unreachable` **with the raw message attached**, never guessed as `refused` | "The key is missing" would be a guess; the honest answer is "could not connect, here is why" |
 
 ## 7. Current consumers (as of 2026-08-23)

@@ -161,7 +161,9 @@ flowchart TD
     LAUNCHDISC -.->|"background, on completion"| SCANRUN
     SCANRUN -.-> SCANRESULT{"exit ok?"}
     SCANRESULT -.->|"ScanBusy"| IGNORE["not an error — a scan is\nalready running, retry next tick"]
-    SCANRESULT -.->|"success or timeout w/ partial XML"| APPLYSCAN["store.apply_scan()\nmerge_inventory() + prune() if complete"]
+    SCANRESULT -.->|"success or timeout w/ partial XML"| COVER["coverage.update_streaks()\n— COMPLETE sweeps only: which\nconfigured target answered nothing"]
+    COVER -.->|"EMPTY_TARGET_SWEEPS in a row"| REPAIR["issue_registry: empty_targets\n— raised, rewritten or cleared\non every complete sweep"]
+    COVER -.-> APPLYSCAN["store.apply_scan()\nmerge_inventory() + prune() if complete"]
     APPLYSCAN -.-> PUBLISH["async_set_updated_data(_build_view())\n— published even on failure,\nso a scan never appears to run forever"]
 
     style RETURN fill:#1a3a2a,stroke:#2b9c6b,color:#eee
