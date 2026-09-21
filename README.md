@@ -47,6 +47,12 @@ would have succeeded. One entry has one setup lifecycle by construction; if
 
 Platforms: `binary_sensor`, `button`, `sensor`, `switch`.
 
+Each discovered host gets a **Deep scan this host** button on its own device
+page (local mode only — the agent's v1 API has no custom-scan channel, so it is
+not offered rather than offered and refused). It runs the same `deep` profile as
+the scanner's *Scan now (deep)* button, against that host's current address, and
+folds the result in without pruning anything else.
+
 - **feeds** — advisory/alert feeds, timezone-correct. `feeds/feedparse.py`
   resolves feed timezone *abbreviations* from an explicit table rather than by
   matching the host's local zone, which is what `dateutil` does by default and

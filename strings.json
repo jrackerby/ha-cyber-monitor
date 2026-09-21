@@ -254,6 +254,9 @@
       },
       "scan_deep": {
         "name": "Scan now (deep)"
+      },
+      "deep_scan": {
+        "name": "Deep scan this host"
       }
     },
     "switch": {
