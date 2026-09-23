@@ -168,7 +168,7 @@ check("only the liveness rule separates them",
 print("\nthe liveness timeout scales with the address space configured")
 check("a hostname is one address", cov.address_count(["nas.lan"]), 1)
 check("a /24 is 256", cov.address_count(["192.0.2.0/24"]), 256)
-check("a /16 is 65536", cov.address_count(["10.77.0.0/16"]), 65536)
+check("a /16 is 65536", cov.address_count(["198.18.0.0/16"]), 65536)
 check("targets add up", cov.address_count(["10.0.0.0/24", "10.0.1.0/24"]), 512)
 check("nmap's octet range counts its own span",
       cov.address_count(["192.0.2.10-19"]), 10)
@@ -194,9 +194,9 @@ check("a small scope keeps exactly the budget it has today",
 check("the floor is the constant this replaced", _FLOOR, 300)
 # THE MOTIVATING SCOPE. 300s could never finish this, so it failed every time.
 check("a /16 gets more than the old flat timeout",
-      cov.derive_discovery_timeout(["10.77.0.0/16"]) > 300, True)
+      cov.derive_discovery_timeout(["198.18.0.0/16"]) > 300, True)
 check("and still less than the ceiling",
-      cov.derive_discovery_timeout(["10.77.0.0/16"]) < _CEIL, True)
+      cov.derive_discovery_timeout(["198.18.0.0/16"]) < _CEIL, True)
 check("a /8 is capped rather than unbounded",
       cov.derive_discovery_timeout(["10.0.0.0/8"]), _CEIL)
 # An IPv6 prefix multiplies out past any sane budget; the cap is what makes
@@ -221,7 +221,7 @@ check("the bounds live in const.py with every other bound",
 print("\nthe timeout is an options key, deriving only when unset")
 T = const.CONF_DISCOVERY_TIMEOUT
 TARGETS = const.CONF_TARGETS
-_SCOPE = {TARGETS: "10.77.0.0/16"}
+_SCOPE = {TARGETS: "198.18.0.0/16"}
 
 
 def resolved(data, options=None):
@@ -229,7 +229,7 @@ def resolved(data, options=None):
 
 
 check("unset derives from the configured scope",
-      resolved(_SCOPE), cov.derive_discovery_timeout(["10.77.0.0/16"]))
+      resolved(_SCOPE), cov.derive_discovery_timeout(["198.18.0.0/16"]))
 check("and a different scope derives differently",
       resolved({TARGETS: "192.0.2.0/24"}), _FLOOR)
 check("a typed value wins over the derivation",
@@ -249,10 +249,10 @@ check("a negative clamps up too", resolved(_SCOPE, {T: -5}), _FLOOR)
 check("above the ceiling clamps down", resolved(_SCOPE, {T: 10 ** 9}), _CEIL)
 check("a non-number derives rather than guessing a constant",
       resolved(_SCOPE, {T: "ages"}),
-      cov.derive_discovery_timeout(["10.77.0.0/16"]))
+      cov.derive_discovery_timeout(["198.18.0.0/16"]))
 check("an empty string derives too",
       resolved(_SCOPE, {T: ""}),
-      cov.derive_discovery_timeout(["10.77.0.0/16"]))
+      cov.derive_discovery_timeout(["198.18.0.0/16"]))
 
 print("\nthe sweep is handed the resolved budget, not a constant")
 check("the scheduled discovery sweep passes it",
