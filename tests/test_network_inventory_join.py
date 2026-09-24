@@ -55,18 +55,18 @@ def host(mac=None, ip=None, status="up", ports=None, **kw):
 
 print("\n--- normalise_mac ---")
 n = join.normalise_mac
-check("colon form", n("88:A2:9E:E1:EA:23"), "88a29ee1ea23")
-check("dash form", n("88-A2-9E-E1-EA-23"), "88a29ee1ea23")
-check("bare form", n("88a29ee1ea23"), "88a29ee1ea23")
-check("dotted cisco form", n("88a2.9ee1.ea23"), "88a29ee1ea23")
-check("already lower", n("88:a2:9e:e1:ea:23"), "88a29ee1ea23")
+check("colon form", n("00:00:5e:00:53:23"), "00005e005323")
+check("dash form", n("00-00-5E-00-53-23"), "00005e005323")
+check("bare form", n("00005e005323"), "00005e005323")
+check("dotted cisco form", n("0000.5e00.5323"), "00005e005323")
+check("already lower", n("00:00:5e:00:53:23"), "00005e005323")
 check("None", n(None), None)
 check("empty", n(""), None)
 # A short value must be REJECTED, not padded or accepted. Two malformed values
 # that both normalised to something short would join against each other and
 # manufacture a match that was never observed.
-check("too short", n("88:A2:9E"), None)
-check("too long", n("88:A2:9E:E1:EA:23:99"), None)
+check("too short", n("00:00:5e"), None)
+check("too long", n("00:00:5e:00:53:23:99"), None)
 check("not hex", n("zz:zz:zz:zz:zz:zz"), None)
 
 print("\n--- join_hosts: the three outcomes ---")
@@ -101,7 +101,7 @@ check("dashed registry MAC matches bare scanner MAC", r.matched, 1)
 print("\n--- a garbage MAC on the known side must not match anything ---")
 r = join.join_hosts(
     {"a": host(mac="AA:BB:CC:DD:EE:01", ip="10.0.0.1")},
-    ["not-a-mac", "", "88:A2"],
+    ["not-a-mac", "", "00:00"],
 )
 check("no false match from unusable known MACs", r.matched, 0)
 check("host reported unknown", r.unknown_count, 1)
@@ -144,7 +144,7 @@ print("\n--- a garbage acknowledged MAC must not match anything ---")
 r = join.join_hosts(
     {"a": host(mac="AA:BB:CC:DD:EE:01", ip="10.0.0.1")},
     [],
-    ["not-a-mac", "", "88:A2"],
+    ["not-a-mac", "", "00:00"],
 )
 check("no false acknowledgement from unusable acked MACs", r.acknowledged_count, 0)
 check("host still reads unknown", r.unknown_count, 1)

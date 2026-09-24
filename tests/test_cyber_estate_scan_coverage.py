@@ -98,7 +98,7 @@ check("a bare address spans itself",
 check("nmap's last-octet range is understood",
       (lambda s: s.last - s.first + 1)(cov.address_span("192.0.2.10-19")), 10)
 check("a /16 does not have to be enumerated to be spanned",
-      (lambda s: s.last - s.first + 1)(cov.address_span("10.77.0.0/16")), 65536)
+      (lambda s: s.last - s.first + 1)(cov.address_span("198.18.0.0/16")), 65536)
 check("a hostname names no fixed span", cov.address_span("nas.lan"), None)
 check("an empty target names no span", cov.address_span(""), None)
 check("a host bit set does not refuse the network (strict=False)",
@@ -219,10 +219,10 @@ check("unreachable() sorts rather than reporting dict order",
       cov.unreachable({"b": 9, "a": 9, "c": 9}, 1), ("a", "b", "c"))
 
 # --- the GH-29 scenario, end to end ----------------------------------------
-print("\nthe estate that raised GH-29: 192.168.x deleted, 10.77/16 live")
-_scope = ["192.168.101.0/24", "192.168.103.0/24", "192.168.106.0/24",
-          "10.77.0.0/16"]
-_live = ["10.77.1.4", "10.77.1.9", "10.77.20.31"]
+print("\nthe GH-29 shape: three deleted /24s beside one live /16")
+_scope = ["192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
+          "198.18.0.0/16"]
+_live = ["198.18.1.4", "198.18.1.9", "198.18.20.31"]
 _streaks = {}
 for _sweep in range(const.EMPTY_TARGET_SWEEPS):
     _found = cov.coverage(_scope, [], _live)
@@ -231,9 +231,9 @@ check("the sweep is NOT empty overall, which is why a total cannot carry this",
       sum(c.hosts for c in _found), 3)
 check("the three deleted subnets are named",
       cov.unreachable(_streaks, const.EMPTY_TARGET_SWEEPS),
-      ("192.168.101.0/24", "192.168.103.0/24", "192.168.106.0/24"))
+      ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
 check("the live subnet is not named",
-      "10.77.0.0/16" in cov.unreachable(_streaks, const.EMPTY_TARGET_SWEEPS),
+      "198.18.0.0/16" in cov.unreachable(_streaks, const.EMPTY_TARGET_SWEEPS),
       False)
 
 # --- stale_days ------------------------------------------------------------
